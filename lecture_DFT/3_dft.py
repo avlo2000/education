@@ -5,7 +5,8 @@ from matplotlib.widgets import Button, Slider
 
 
 def f(t, phase, frequency):
-    return np.sin(2 * np.pi * frequency * t + phase)
+    # return np.sin(2 * np.pi * frequency * t + phase)
+    return np.sin(2 * np.pi * frequency * t + phase) + np.sin(6 * np.pi * frequency * t + phase)
 
 
 def f_fft(t, phase, frequency):
