@@ -13,7 +13,6 @@ ts = np.linspace(0, 10, 1000)
 init_phase = 5
 init_frequency = 3
 
-# Fix subplot creation with two rows: top for signals, bottom for product graph
 fig = plt.figure(figsize=(10, 7))
 gs = fig.add_gridspec(2, 1, height_ratios=[3, 2])
 ax1 = fig.add_subplot(gs[0])
@@ -23,28 +22,22 @@ signal, = ax1.plot(ts, f(ts, init_phase, init_frequency), lw=2)
 trg_data = f(ts, init_phase, init_frequency)
 ax1.plot(ts, trg_data, lw=2)
 
-# Create complex signals for polar plot
 complex_trg = np.exp(1j * (2 * np.pi * init_frequency * ts + init_phase))
 complex_sig = complex_trg.copy()
 
-
-# Add correlation text box
-corr_text = ax1.text(0.04, 0.95, '', transform=ax1.transAxes)
+corr_text = ax1.text(0.9, 1.05, '', transform=ax1.transAxes)
 complex_corr_text = ax1.text(0.04, 1.05, '', transform=ax1.transAxes)
 
 ax1.set_xlabel('Time [s]')
 
-# Set labels for product plot
 ax_prod.set_xlabel('Time [s]')
 ax_prod.set_ylabel('Product')
 ax_prod.set_ylim(-2.1, 2.1)
 
-# Create initial product plot
 init_phase_rad = np.pi * init_phase / 180
 prod = f(ts, init_phase_rad, init_frequency) * f(ts, init_phase_rad, init_frequency)
 prod_line, = ax_prod.plot(ts, prod, lw=2, color='green')
 
-# Adjust layout
 fig.subplots_adjust(left=0.1, right=0.95, bottom=0.25)
 
 axfreq = fig.add_axes([0.25, 0.1, 0.65, 0.03])
