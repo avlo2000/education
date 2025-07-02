@@ -1,6 +1,4 @@
 from matplotlib import pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.cm as cm
 import numpy as np
 
 def s_plane_plot(sfunc, limits = [3,3,10], nsamp = 500):
