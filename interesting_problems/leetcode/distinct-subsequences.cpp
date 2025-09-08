@@ -23,7 +23,7 @@ int numDistinct(string s, string t)
             dp[j][i] = dp[j][i - 1];
             if (s[i] == t[j])
             {
-                dp[j][i] = dp[j - 1][i - 1  ] + dp[j][i - 1];
+                dp[j][i] = dp[j - 1][i - 1] + dp[j][i - 1];
             }
         }
     return dp.back().back();
