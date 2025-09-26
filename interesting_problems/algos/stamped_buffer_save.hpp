@@ -25,7 +25,6 @@ public:
     StampedRingBuffer(size_t cap) : cap_(cap)
     {
         buffer_ = new ElType[cap_];
-        epoch_ = new std::atomic<uint8_t>[cap_];
     }
 
     ~StampedRingBuffer()
@@ -42,12 +41,7 @@ public:
         else size++;
         size_.store(size, std::memory_order_release);
         start_.store(start, std::memory_order_release);
-
-        size_t idx = (start + size - 1ull) % cap_;
-        std::atomic<uint8_t> &slot = epoch_[idx];
-        slot.fetch_add(1, std::memory_order_acquire); // mark as being
-        buffer_[idx] = el;
-        slot.fetch_sub(1, std::memory_order_release); // mark as stable
+        buffer_[(start + size) % cap_] = el;
     }
 
     // if size == 0 causes UB
@@ -59,9 +53,11 @@ public:
         {
             size_t half = len >> 1;
             size_t mid = (first + half) % cap_;
-
-            ElType mid_el = get(start, mid);
-            if (mid_el.ts < ts)
+            // if mid was changed during bisect in case if should exit
+            // it doesn't gurantee optimal result, but prevents Race condition
+            if (was_changed(mid, start))
+                return mid;
+            if (buffer_[mid].ts < ts)
             {
                 first = mid;
                 ++first;
@@ -130,8 +126,6 @@ private:
 
     inline bool try_get(ElType& el, size_t prev_start, size_t idx) const
     {
-        if(epoch_[idx].load(std::memory_order_acquire) != 0)
-            return false;
         el = buffer_[idx];
         if(idx == start_.load(std::memory_order_acquire))
             return false;
@@ -148,7 +142,6 @@ private:
 private:
     std::atomic<size_t> start_ = 0;
     ElType* buffer_;
-    std::atomic<u_int8_t>* epoch_{0};
     size_t cap_;
     std::atomic<size_t> size_ = 0;
 };

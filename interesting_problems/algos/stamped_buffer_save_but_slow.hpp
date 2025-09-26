@@ -25,9 +25,9 @@ public:
     StampedRingBuffer(size_t cap) : cap_(cap)
     {
         buffer_ = new ElType[cap_];
-        epoch_ = new std::atomic<uint8_t>[cap_];
+        seq_lock_ = new std::atomic_flag[cap_];
         for (size_t i = 0; i < cap_; ++i)
-            epoch_[i].store(0, std::memory_order_relaxed);
+            seq_lock_[i].clear();
     }
 
     ~StampedRingBuffer()
@@ -38,16 +38,16 @@ public:
     // supports only single producer
     void add(const ElType &el)
     {
-        auto [start, size] = idx_.load(std::memory_order_acquire);
+        auto [start, size] = idx_.load(std::memory_order_relaxed);
         if (size == cap_)
             start = (start + 1) % cap_;
         else
             size++;
         idx_.store({start, size}, std::memory_order_release);
         size_t end = (start + size - 1ull) % cap_;
-        epoch_[end].store(1, std::memory_order_acquire); // mark as being written
+        seq_lock_[end].test_and_set(std::memory_order_acquire); // mark as being written
         buffer_[end] = el;
-        epoch_[end].store(0, std::memory_order_release); // mark as stable
+        seq_lock_[end].clear(std::memory_order_release); // mark as stable
     }
 
     // if size == 0 causes UB
@@ -141,7 +141,8 @@ private:
     inline bool try_get(ElType &el, size_t prev_start, size_t idx) const
     {
         el = buffer_[idx];
-        bool is_locked = epoch_[idx].load(std::memory_order_acquire);
+        bool is_locked = seq_lock_[idx].test_and_set(std::memory_order_acquire);
+        seq_lock_[idx].clear(std::memory_order_release);
         return !is_locked && !was_changed(idx, prev_start);
     }
 
@@ -160,7 +161,7 @@ private:
         uint32_t size = 0;
     };
     std::atomic<Indexing> idx_ = {};
-    std::atomic<uint8_t> *epoch_{nullptr};
+    std::atomic_flag *seq_lock_{nullptr};
     ElType *buffer_;
     size_t cap_;
 };
