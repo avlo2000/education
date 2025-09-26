@@ -13,43 +13,51 @@
 #include <condition_variable>
 
 // Test utility functions
-void test_assert(bool condition, const std::string& test_name) {
-    if (condition) {
+void test_assert(bool condition, const std::string &test_name)
+{
+    if (condition)
+    {
         std::cout << "[PASS] " << test_name << std::endl;
-    } else {
+    }
+    else
+    {
         std::cout << "[FAIL] " << test_name << std::endl;
         assert(false);
     }
 }
 
-class MultithreadedTestSuite {
+class MultithreadedTestSuite
+{
 private:
     std::mutex output_mutex;
-    
-    void safe_print(const std::string& message) {
+
+    void safe_print(const std::string &message)
+    {
         std::lock_guard<std::mutex> lock(output_mutex);
         std::cout << message << std::endl;
     }
 
 public:
     // Test 1: Single producer, multiple consumers - validate binary search correctness
-    void test_single_producer_multiple_consumers_basic() {
+    void test_single_producer_multiple_consumers_basic()
+    {
         safe_print("\n=== Test Single Producer Multiple Consumers - Binary Search Correctness ===");
-        
-        const size_t buffer_capacity = 100;
+
+        const size_t buffer_capacity = 1000;
         const size_t num_elements = 1000;
         const size_t num_consumers = 4;
-        
+
         StampedRingBuffer<int> buffer(buffer_capacity);
         std::atomic<bool> producer_done{false};
         std::atomic<size_t> total_searches{0};
         std::atomic<size_t> invalid_results{0};
-        
+
         // Add initial element to ensure buffer is never empty
         buffer.add({0, 0});
-        
+
         // Producer thread: adds elements with strictly increasing timestamps
-        std::thread producer([&buffer, &producer_done, num_elements]() {
+        std::thread producer([&buffer, &producer_done, num_elements]()
+                             {
             for (size_t i = 1; i <= num_elements; ++i) {
                 uint64_t timestamp = i * 10; // Strictly increasing: 10, 20, 30, ...
                 buffer.add({timestamp, static_cast<int>(i)});
@@ -59,14 +67,15 @@ public:
                     std::this_thread::sleep_for(std::chrono::microseconds(10));
                 }
             }
-            producer_done = true;
-        });
-        
+            producer_done = true; });
+
         // Consumer threads: validate binary search correctness
         std::vector<std::thread> consumers;
-        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id) {
-            consumers.emplace_back([&buffer, &producer_done, &total_searches, 
-                                  &invalid_results, consumer_id, num_elements]() {
+        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id)
+        {
+            consumers.emplace_back([&buffer, &producer_done, &total_searches,
+                                    &invalid_results, consumer_id, num_elements]()
+                                   {
                 std::random_device rd;
                 std::mt19937 gen(rd() + consumer_id);
                 std::uniform_int_distribution<uint64_t> dis(0, num_elements * 10);
@@ -106,60 +115,63 @@ public:
                 }
                 
                 total_searches += local_searches;
-                invalid_results += local_invalid;
-            });
+                invalid_results += local_invalid; });
         }
-        
+
         producer.join();
-        for (auto& consumer : consumers) {
+        for (auto &consumer : consumers)
+        {
             consumer.join();
         }
-        
+
         // Validate results
         test_assert(total_searches > 0, "Consumers performed searches");
         test_assert(producer_done, "Producer completed");
-        test_assert(invalid_results == 0, "No invalid search results (found " + 
-                   std::to_string(invalid_results) + " invalid out of " + 
-                   std::to_string(total_searches) + " total)");
-        
-        safe_print("Binary search correctness test completed with " + std::to_string(total_searches) + 
-                  " searches, " + std::to_string(invalid_results) + " invalid results");
+        test_assert(invalid_results == 0, "No invalid search results (found " +
+                                              std::to_string(invalid_results) + " invalid out of " +
+                                              std::to_string(total_searches) + " total)");
+
+        safe_print("Binary search correctness test completed with " + std::to_string(total_searches) +
+                   " searches, " + std::to_string(invalid_results) + " invalid results");
     }
-    
+
     // Test 2: Race condition detection - ensure binsearch always returns consistent data
-    void test_race_condition_detection() {
+    void test_race_condition_detection()
+    {
         safe_print("\n=== Test Race Condition Detection ===");
-        
-        const size_t buffer_capacity = 10; // Small buffer to force frequent wraparound
-        const size_t num_elements = 5000;
-        const size_t num_consumers = 8;
-        
+
+        const size_t buffer_capacity = 1024; // Small buffer to force frequent wraparound
+        const size_t num_elements = 1500000;
+        const size_t num_consumers = 12;
+
         StampedRingBuffer<int> buffer(buffer_capacity);
         std::atomic<bool> producer_done{false};
         std::atomic<size_t> inconsistent_reads{0};
         std::atomic<size_t> total_reads{0};
-        
+
         // Add initial element
         buffer.add({0, 0});
-        
+
         // Producer thread: rapidly adds elements
-        std::thread producer([&buffer, &producer_done, num_elements]() {
+        std::thread producer([&buffer, &producer_done, num_elements]()
+                             {
             for (size_t i = 1; i <= num_elements; ++i) {
                 uint64_t timestamp = i * 2; // Strictly increasing, even numbers
                 buffer.add({timestamp, static_cast<int>(i)});
                 
                 // Minimal delay to create more race conditions
                 if (i % 50 == 0) {
-                    std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(10));
                 }
             }
-            producer_done = true;
-        });
-        
+            producer_done = true; });
+
         // Consumer threads: aggressively search and validate consistency
         std::vector<std::thread> consumers;
-        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id) {
-            consumers.emplace_back([&buffer, &producer_done, &inconsistent_reads, &total_reads, consumer_id, num_elements]() {
+        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id)
+        {
+            consumers.emplace_back([&buffer, &producer_done, &inconsistent_reads, &total_reads, consumer_id, num_elements]()
+                                   {
                 std::random_device rd;
                 std::mt19937 gen(rd() + consumer_id);
                 std::uniform_int_distribution<uint64_t> dis(0, num_elements * 2);
@@ -175,6 +187,9 @@ public:
                     // Validate that timestamp and element are consistent
                     // Element should be timestamp / 2 (since timestamp = i * 2)
                     if (result.ts % 2 != 0 || result.elem != static_cast<int>(result.ts / 2)) {
+                        std::cout << "Inconsistency detected: Buffer size " << buffer.size() << ", searched ts " << search_ts << ", got ts " << result.ts << ", elem " << result.elem << std::endl;
+                        // Print buffer min ts and max ts
+
                         ++local_inconsistent;
                     }
                     
@@ -182,6 +197,13 @@ public:
                     if (result.ts > num_elements * 2) {
                         ++local_inconsistent;
                     }
+                    // auto oldest = buffer.get_oldest();
+                    // auto newest = buffer.get_newest();
+                    // if (oldest.ts > newest.ts) {
+                    //     ++local_inconsistent;
+                    //     // assert(oldest.ts - newest.ts == 2);
+                    //     std::cout << "Oldest-newest inversion: diff " << oldest.ts - newest.ts << std::endl;
+                    // }
                 }
                 
                 // Continue testing for a bit after producer finishes
@@ -192,44 +214,59 @@ public:
                     
                     if (result.ts % 2 != 0 || result.elem != static_cast<int>(result.ts / 2)) {
                         ++local_inconsistent;
+                        std::cout << "Inconsistency detected: ts=" << result.ts << ", elem=" << result.elem << std::endl;
+                    }
+
+                    // Final rounds also verify oldest <= newest
+                    if ((i % 10) == 0) {
+                        // auto oldest = buffer.get_oldest();
+                        // auto newest = buffer.get_newest();
+                        // if (oldest.ts > newest.ts) {
+                        //     ++local_inconsistent;
+                        //     assert(oldest.ts - newest.ts == 2);
+                        //     assert(false);
+                        //     std::cout << "Oldest-newest inversion: diff " << oldest.ts - newest.ts << std::endl;
+                        // }
                     }
                 }
                 
                 inconsistent_reads += local_inconsistent;
-                total_reads += local_reads;
-            });
+                total_reads += local_reads; });
         }
-        
+
         producer.join();
-        for (auto& consumer : consumers) {
+        for (auto &consumer : consumers)
+        {
             consumer.join();
         }
-        
-        test_assert(inconsistent_reads == 0, "No inconsistent reads detected (found " + 
-                   std::to_string(inconsistent_reads) + " inconsistencies out of " +
-                   std::to_string(total_reads) + " total reads)");
+
+        test_assert(inconsistent_reads == 0, "No inconsistent reads detected (found " +
+                                                 std::to_string(inconsistent_reads) + " inconsistencies out of " +
+                                                 std::to_string(total_reads) + " total reads)");
     }
-    
+
     // Test 3: High frequency producer with timestamp validation
-    void test_high_frequency_producer() {
+    void test_high_frequency_producer()
+    {
         safe_print("\n=== Test High Frequency Producer ===");
-        
+
         const size_t buffer_capacity = 50;
         const size_t num_elements = 10000;
         const size_t num_consumers = 6;
-        
+
         StampedRingBuffer<uint64_t> buffer(buffer_capacity);
         std::atomic<bool> producer_done{false};
         std::atomic<uint64_t> max_timestamp_produced{0};
         std::atomic<size_t> timestamp_violations{0};
         std::atomic<size_t> total_validations{0};
-        
+
         // Add initial element
         buffer.add({1, 1});
         max_timestamp_produced = 1;
-        
+
         // High frequency producer
-        std::thread producer([&buffer, &producer_done, &max_timestamp_produced, num_elements]() {
+        std::thread producer([&buffer, &producer_done, &max_timestamp_produced, num_elements]()
+                             {
             auto start_time = std::chrono::high_resolution_clock::now();
             
             for (size_t i = 2; i <= num_elements; ++i) {
@@ -240,14 +277,15 @@ public:
                 buffer.add({timestamp, timestamp}); // Element equals timestamp for easy validation
                 max_timestamp_produced = timestamp;
             }
-            producer_done = true;
-        });
-        
+            producer_done = true; });
+
         // Consumers validate that binary search returns consistent timestamp-element pairs
         std::vector<std::thread> consumers;
-        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id) {
-            consumers.emplace_back([&buffer, &producer_done, &max_timestamp_produced, 
-                                  &timestamp_violations, &total_validations, consumer_id]() {
+        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id)
+        {
+            consumers.emplace_back([&buffer, &producer_done, &max_timestamp_produced,
+                                    &timestamp_violations, &total_validations, consumer_id]()
+                                   {
                 std::random_device rd;
                 std::mt19937 gen(rd() + consumer_id);
                 
@@ -291,40 +329,140 @@ public:
                 }
                 
                 timestamp_violations += local_violations;
-                total_validations += local_validations;
-            });
+                total_validations += local_validations; });
         }
-        
+
         producer.join();
-        for (auto& consumer : consumers) {
+        for (auto &consumer : consumers)
+        {
             consumer.join();
         }
-        
+
         test_assert(timestamp_violations == 0, "No timestamp-element mismatches (found " +
-                   std::to_string(timestamp_violations) + " violations out of " +
-                   std::to_string(total_validations) + " validations)");
+                                                   std::to_string(timestamp_violations) + " violations out of " +
+                                                   std::to_string(total_validations) + " validations)");
         test_assert(max_timestamp_produced > 0, "Observed non-zero timestamps");
     }
-    
+
+    // Test 4.5: XOR integrity data race test using 0xDEADBEEF
+    void test_xor_integrity_data_race()
+    {
+        safe_print("\n=== Test XOR Integrity Under Concurrency (0xDEADBEEF) ===");
+
+        constexpr uint32_t XOR_MASK = 0xDEADBEEF;
+        const size_t buffer_capacity = 1024;  // small to increase wraparound
+        const size_t num_elements = 1500000; // stress but still completes quickly
+        const size_t num_consumers = 12;
+
+        StampedRingBuffer<uint32_t> buffer(buffer_capacity);
+        std::atomic<bool> producer_done{false};
+        std::atomic<uint64_t> max_ts{0};
+        std::atomic<size_t> total_checks{0};
+        std::atomic<size_t> xor_violations{0};
+
+        // Seed element: ts=0, elem = 0 ^ MASK
+        buffer.add({0, static_cast<uint32_t>(0u ^ XOR_MASK)});
+
+        // Single producer with strictly increasing timestamps
+        std::thread producer([&]()
+                             {
+            for (uint64_t i = 1; i <= num_elements; ++i) {
+                uint64_t ts = i; // keep within 32-bit space for XOR with elem
+                uint32_t data = static_cast<uint32_t>(ts) ^ XOR_MASK;
+                buffer.add({ts, data});
+                max_ts.store(ts, std::memory_order_relaxed);
+
+                if ((i % 256ull) == 0ull) {
+                    // small pause to shuffle interleavings
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(50));
+                }
+            }
+            producer_done.store(true, std::memory_order_release); });
+
+        // Multiple consumers continuously validating XOR relationship
+        std::vector<std::thread> consumers;
+        consumers.reserve(num_consumers);
+        for (size_t id = 0; id < num_consumers; ++id)
+        {
+            consumers.emplace_back([&, id]()
+                                   {
+                std::random_device rd;
+                std::mt19937 gen(rd() + static_cast<unsigned int>(id));
+
+                size_t local_checks = 0;
+                size_t local_violations = 0;
+
+                while (!producer_done.load(std::memory_order_acquire)) {
+                    uint64_t cur_max = max_ts.load(std::memory_order_relaxed);
+                    if (cur_max == 0) { continue; }
+
+                    std::uniform_int_distribution<uint64_t> dis(0, cur_max);
+                    uint64_t search_ts = dis(gen);
+                    auto el = buffer.binsearch(search_ts);
+                    ++local_checks;
+
+                    // Validate that elem ^ MASK == low32(ts)
+                    uint32_t low32_ts = static_cast<uint32_t>(el.ts);
+                    if ((el.elem ^ XOR_MASK) != low32_ts) {
+                        ++local_violations;
+                    }
+
+                    if ((local_checks & 0x3FFu) == 0u) {
+                        std::this_thread::sleep_for(std::chrono::microseconds(1));
+                    }
+                }
+
+                // Final sampling after producer finished
+                uint64_t final_max = max_ts.load(std::memory_order_relaxed);
+                if (final_max > 0) {
+                    std::uniform_int_distribution<uint64_t> dis(0, final_max);
+                    for (int i = 0; i < 200; ++i) {
+                        uint64_t search_ts = dis(gen);
+                        auto el = buffer.binsearch(search_ts);
+                        ++local_checks;
+                        uint32_t low32_ts = static_cast<uint32_t>(el.ts);
+                        if ((el.elem ^ XOR_MASK) != low32_ts) {
+                            ++local_violations;
+                            assert(false);
+                        }
+                    }
+                }
+
+                total_checks += local_checks;
+                xor_violations += local_violations; });
+        }
+
+        producer.join();
+        for (auto &t : consumers)
+            t.join();
+
+        test_assert(total_checks > 0, "Performed XOR validations");
+        test_assert(xor_violations == 0, "XOR integrity holds under concurrency (found " +
+                                             std::to_string(xor_violations.load()) + " violations out of " +
+                                             std::to_string(total_checks.load()) + ")");
+    }
+
     // Test 4: Stress test with wraparound under contention - focus on correctness
-    void test_wraparound_stress() {
+    void test_wraparound_stress()
+    {
         safe_print("\n=== Test Wraparound Stress - Binary Search Correctness ===");
-        
-        const size_t buffer_capacity = 5; // Very small to force frequent wraparound
+
+        const size_t buffer_capacity = 50; // Very small to force frequent wraparound
         const size_t num_elements = 2000;
         const size_t num_consumers = 10;
-        
+
         StampedRingBuffer<size_t> buffer(buffer_capacity);
         std::atomic<bool> producer_done{false};
         std::atomic<size_t> correct_searches{0};
         std::atomic<size_t> total_search_attempts{0};
         std::atomic<size_t> current_max_element{0};
-        
+
         // Add initial element
         buffer.add({0, 0});
-        
+
         // Producer rapidly fills small buffer
-        std::thread producer([&buffer, &producer_done, &current_max_element, num_elements]() {
+        std::thread producer([&buffer, &producer_done, &current_max_element, num_elements]()
+                             {
             for (size_t i = 1; i <= num_elements; ++i) {
                 buffer.add({i, i});
                 current_max_element = i;
@@ -334,14 +472,15 @@ public:
                     std::this_thread::sleep_for(std::chrono::nanoseconds(50));
                 }
             }
-            producer_done = true;
-        });
-        
+            producer_done = true; });
+
         // Many consumers competing for searches, validating correctness
         std::vector<std::thread> consumers;
-        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id) {
-            consumers.emplace_back([&buffer, &producer_done, &correct_searches, 
-                                  &total_search_attempts, &current_max_element, consumer_id, num_elements]() {
+        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id)
+        {
+            consumers.emplace_back([&buffer, &producer_done, &correct_searches,
+                                    &total_search_attempts, &current_max_element, consumer_id, num_elements]()
+                                   {
                 std::random_device rd;
                 std::mt19937 gen(rd() + consumer_id);
                 
@@ -360,6 +499,9 @@ public:
                         // Validate result: timestamp should equal element and be within valid range
                         if (result.ts == result.elem && result.ts <= max_so_far + buffer_capacity) {
                             ++local_correct;
+                        } else {
+                            std::cout << "Wraparound inconsistency: searched " << search_ts 
+                                      << ", got ts=" << result.ts << ", elem=" << result.elem << std::endl;
                         }
                     }
                 }
@@ -376,52 +518,57 @@ public:
                     size_t expected_min = num_elements > buffer_capacity ? num_elements - buffer_capacity + 1 : 0;
                     if (result.ts == result.elem && result.ts >= expected_min && result.ts <= num_elements) {
                         ++local_correct;
+                    } else {
+                        std::cout << "Wraparound inconsistency: searched " << search_ts 
+                                  << ", got ts=" << result.ts << ", elem=" << result.elem << std::endl;
                     }
                 }
                 
                 total_search_attempts += local_attempts;
-                correct_searches += local_correct;
-            });
+                correct_searches += local_correct; });
         }
-        
+
         producer.join();
-        for (auto& consumer : consumers) {
+        for (auto &consumer : consumers)
+        {
             consumer.join();
         }
-        
+
         test_assert(correct_searches > 0, "Some searches were correct");
         test_assert(total_search_attempts > 0, "Search attempts were made");
-        
+
         double correctness_rate = static_cast<double>(correct_searches) / total_search_attempts;
-        safe_print("Wraparound stress test: " + std::to_string(correct_searches) + "/" + 
-                  std::to_string(total_search_attempts) + " searches correct (" + 
-                  std::to_string(correctness_rate * 100) + "%)");
-        
+        safe_print("Wraparound stress test: " + std::to_string(correct_searches) + "/" +
+                   std::to_string(total_search_attempts) + " searches correct (" +
+                   std::to_string(correctness_rate * 100) + "%)");
+
         // We expect very high correctness rate for a working lock-free structure
         test_assert(correctness_rate > 0.95, "High correctness rate under stress (expected >95%, got " +
-                   std::to_string(correctness_rate * 100) + "%)");
+                                                 std::to_string(correctness_rate * 100) + "%)");
     }
-    
+
     // Test 5: Producer with bursts and consumers validating binary search closest match
-    void test_burst_producer_varied_consumers() {
+    void test_burst_producer_varied_consumers()
+    {
         safe_print("\n=== Test Burst Producer with Binary Search Validation ===");
-        
+
         const size_t buffer_capacity = 20;
         const size_t num_bursts = 50;
         const size_t burst_size = 20;
         const size_t num_consumers = 4;
-        
+
         StampedRingBuffer<std::string> buffer(buffer_capacity);
         std::atomic<bool> producer_done{false};
         std::atomic<size_t> total_elements_added{0};
         std::atomic<size_t> validation_failures{0};
-        
+
         // Add initial element
         buffer.add({0, "data_0"});
         total_elements_added = 1;
-        
+
         // Producer adds elements in bursts
-        std::thread producer([&buffer, &producer_done, &total_elements_added, num_bursts, burst_size]() {
+        std::thread producer([&buffer, &producer_done, &total_elements_added, num_bursts, burst_size]()
+                             {
             size_t element_counter = 1;
             
             for (size_t burst = 0; burst < num_bursts; ++burst) {
@@ -437,16 +584,16 @@ public:
                 // Pause between bursts
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-            producer_done = true;
-        });
-        
+            producer_done = true; });
+
         // Consumers validate binary search behavior
         std::vector<std::thread> consumers;
         std::vector<std::atomic<size_t>> consumer_search_counts(num_consumers);
         std::vector<std::atomic<size_t>> consumer_failures(num_consumers);
-        
+
         // Consumer 0: Searches for exact timestamps and validates
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]() {
+        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
+                               {
             std::random_device rd;
             std::mt19937 gen(rd());
             
@@ -468,11 +615,11 @@ public:
                     }
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(100));
-            }
-        });
-        
+            } });
+
         // Consumer 1: Searches for in-between timestamps and validates closest match
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]() {
+        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
+                               {
             std::random_device rd;
             std::mt19937 gen(rd());
             
@@ -495,11 +642,11 @@ public:
                     }
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(150));
-            }
-        });
-        
+            } });
+
         // Consumer 2: Random searches with validation
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]() {
+        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
+                               {
             std::random_device rd;
             std::mt19937 gen(rd());
             
@@ -520,11 +667,11 @@ public:
                     }
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(80));
-            }
-        });
-        
+            } });
+
         // Consumer 3: Boundary searches (very early and very late timestamps)
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]() {
+        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
+                               {
             while (!producer_done) {
                 size_t current_total = total_elements_added.load();
                 if (current_total > 1) {
@@ -549,52 +696,59 @@ public:
                     }
                 }
                 std::this_thread::sleep_for(std::chrono::microseconds(120));
-            }
-        });
-        
+            } });
+
         producer.join();
-        for (auto& consumer : consumers) {
+        for (auto &consumer : consumers)
+        {
             consumer.join();
         }
-        
+
         // Calculate total failures
         size_t total_failures = 0;
-        for (size_t i = 0; i < num_consumers; ++i) {
+        for (size_t i = 0; i < num_consumers; ++i)
+        {
             total_failures += consumer_failures[i].load();
         }
-        
+
         // Validate all consumers performed searches
-        for (size_t i = 0; i < num_consumers; ++i) {
-            test_assert(consumer_search_counts[i] > 0, 
-                       "Consumer " + std::to_string(i) + " performed searches (" + 
-                       std::to_string(consumer_search_counts[i]) + ")");
+        for (size_t i = 0; i < num_consumers; ++i)
+        {
+            test_assert(consumer_search_counts[i] > 0,
+                        "Consumer " + std::to_string(i) + " performed searches (" +
+                            std::to_string(consumer_search_counts[i]) + ")");
         }
-        
+
         test_assert(total_elements_added == num_bursts * burst_size + 1, "All elements were added");
         test_assert(total_failures == 0, "No validation failures in binary search results (found " +
-                   std::to_string(total_failures) + " failures)");
+                                             std::to_string(total_failures) + " failures)");
     }
-    
-    void run_all_tests() {
+
+    void run_all_tests()
+    {
         safe_print("Starting comprehensive multi-threaded StampedRingBuffer tests...\n");
-        
-        try {
+
+        try
+        {
             test_single_producer_multiple_consumers_basic();
+            test_xor_integrity_data_race();
             test_race_condition_detection();
             test_high_frequency_producer();
             test_wraparound_stress();
             test_burst_producer_varied_consumers();
-            
+
             safe_print("\n🎉 All multi-threaded tests passed! 🎉");
-            
-        } catch (const std::exception& e) {
+        }
+        catch (const std::exception &e)
+        {
             safe_print("\n❌ Multi-threaded test failed with exception: " + std::string(e.what()));
             throw;
         }
     }
 };
 
-int main() {
+int main()
+{
     MultithreadedTestSuite test_suite;
     test_suite.run_all_tests();
     return 0;

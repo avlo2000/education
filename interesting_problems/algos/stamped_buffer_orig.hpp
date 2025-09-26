@@ -16,17 +16,16 @@ struct StampedElement
     T elem;
 };
 
-typedef uint32_t idx_t;
-
 template <class T>
 class StampedRingBuffer
 {
     using ElType = StampedElement<T>;
 
 public:
-    StampedRingBuffer(idx_t cap) : cap_(cap)
+    StampedRingBuffer(size_t cap) : cap_(cap)
     {
         buffer_ = new ElType[cap_];
+        seq_lock_ = new std::atomic<uint8_t>[cap_];
     }
 
     ~StampedRingBuffer()
@@ -37,29 +36,32 @@ public:
     // supports only single producer
     void add(const ElType &el)
     {
-        idx_t start = start_.load(std::memory_order_relaxed);
-        idx_t size = size_.load(std::memory_order_relaxed);
+        size_t start = start_.load(std::memory_order_relaxed);
+        size_t size = size_.load(std::memory_order_relaxed);
         if (size == cap_) start = (start + 1) % cap_;
         else size++;
-        buffer_[(start + size - 1) % cap_] = el;
         size_.store(size, std::memory_order_release);
         start_.store(start, std::memory_order_release);
+
+        size_t idx = (start + size - 1ull) % cap_;
+        std::atomic<uint8_t> &slot = seq_lock_[idx];
+        slot.fetch_add(1, std::memory_order_acquire); // mark as being
+        buffer_[idx] = el;
+        slot.fetch_sub(1, std::memory_order_release); // mark as stable
     }
 
     // if size == 0 causes UB
-    idx_t binsearch(uint64_t ts, idx_t first, idx_t len) const
+    size_t binsearch(uint64_t ts, size_t first, size_t len) const
     {
-        idx_t start = first;
-        idx_t size = len;
+        size_t start = first;
+        size_t size = len;
         while (len > 2ull)
         {
-            idx_t half = len >> 1;
-            idx_t mid = (first + half) % cap_;
-            // if mid was changed during bisect in case if should exit
-            // it doesn't gurantee optimal result, but prevents Race condition
-            if (was_changed(mid, start))
-                return mid;
-            if (buffer_[mid].ts < ts)
+            size_t half = len >> 1;
+            size_t mid = (first + half) % cap_;
+
+            ElType mid_el = get(start, mid);
+            if (mid_el.ts < ts)
             {
                 first = mid;
                 ++first;
@@ -71,10 +73,10 @@ public:
                 len = half;
             }
         }
-        idx_t second = (first + 1) % size;
-        idx_t ts0 = buffer_[first].ts;
-        idx_t ts1 = buffer_[second].ts;
-        idx_t choice = first;
+        size_t second = (first + 1) % size;
+        size_t ts0 = buffer_[first].ts;
+        size_t ts1 = buffer_[second].ts;
+        size_t choice = first;
         if (ts0 < ts1 && ts > ts0)
             choice = second;
         return choice;
@@ -87,9 +89,9 @@ public:
 
     ElType binsearch(uint64_t ts) const
     {
-        idx_t start = start_;
-        idx_t first = start, len = size_.load(std::memory_order_relaxed);
-        idx_t choice = binsearch(ts, first, len);
+        size_t start = start_;
+        size_t first = start, len = size_.load(std::memory_order_relaxed);
+        size_t choice = binsearch(ts, first, len);
         return get(start, choice);
     }
 
@@ -98,7 +100,7 @@ public:
     {
         if (nord)
         {
-            for (idx_t i = 0; i < size_; ++i)
+            for (size_t i = 0; i < size_; ++i)
                 if (i != start_)
                     std::cout << buffer_[i].ts << " ";
                 else
@@ -106,7 +108,7 @@ public:
             std::cout << std::endl;
             return;
         }
-        for (idx_t i = 0; i < size_; ++i)
+        for (size_t i = 0; i < size_; ++i)
             if (i != start_)
                 std::cout << buffer_[(start_ + i) % cap_].ts << " ";
             else
@@ -116,36 +118,39 @@ public:
 
     bool empty() const { return size_ == 0ull; }
 
-    idx_t size() const { return size_; }
+    size_t size() const { return size_; }
 
 private:
-    inline ElType get(idx_t prev_start, idx_t idx) const
+    inline ElType get(size_t prev_start, size_t idx) const
     {
         ElType el;
         while (!try_get(el, prev_start, idx)) {++idx; idx %= cap_; }
         return el;
     }
 
-    inline bool try_get(ElType& el, idx_t prev_start, idx_t idx) const
+    inline bool try_get(ElType& el, size_t prev_start, size_t idx) const
     {
+        if(seq_lock_[idx].load(std::memory_order_acquire) != 0)
+            return false;
         el = buffer_[idx];
         if(idx == start_.load(std::memory_order_acquire))
             return false;
         return !was_changed(idx, prev_start);
     }
 
-    inline bool was_changed(idx_t i, idx_t prev_start) const
+    inline bool was_changed(size_t i, size_t prev_start) const
     {
-        idx_t start = start_.load(std::memory_order_acquire);
+        size_t start = start_.load(std::memory_order_acquire);
         if (start >= prev_start)
             return (i >= prev_start) && (i < start);
         return (i >= prev_start) || (i < start);
     }
 private:
-    std::atomic<idx_t> start_ = 0;
+    std::atomic<size_t> start_ = 0;
     ElType* buffer_;
-    idx_t cap_;
-    std::atomic<idx_t> size_ = 0;
+    std::atomic<u_int8_t>* seq_lock_{0};
+    size_t cap_;
+    std::atomic<size_t> size_ = 0;
 };
 
 #endif
