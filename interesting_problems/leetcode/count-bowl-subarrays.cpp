@@ -30,5 +30,5 @@ long long bowlSubarrays(const vector<int>& nums) {
 
 int main()
 {
-    cout << bowlSubarrays({2,5,3,1,4}) << endl;
+    cout << bowlSubarrays({5,0,4,2,5}) << endl;
 }
