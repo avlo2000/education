@@ -26,7 +26,7 @@ public:
     {
         buffer_ = new ElType[cap_];
         start_.store(0, std::memory_order_relaxed);
-        size_.store(0, std::memory_order_relaxed);
+        end_.store(0, std::memory_order_relaxed);
         period_ = period;
     }
 
@@ -35,22 +35,21 @@ public:
         delete[] buffer_;
     }
 
+    size_t incr(size_t idx) {
+        return (idx + 1) % cap_;
+    }
+
     // supports only single producer
     void add(const ElType &el)
     {
         size_t start = start_.load(std::memory_order_acquire);
-        size_t size = size_.load(std::memory_order_acquire);
-        if (size == cap_) {
-            start = (start + 1) % cap_;
-            start_.store(start, std::memory_order_release);
+        size_t end = end_.load(std::memory_order_acquire);
+        if (end - start >= cap_) { // Full
+            start = incr(start);
         }
-        else {
-            size++;
-            size_.store(size, std::memory_order_release);
-        }
-
-        size_t end = (start + size - 1ull) % cap_;
         buffer_[end] = el;
+        end = incr(end);
+        start_.store
     }
 
     void get(uint64_t ts)
@@ -62,7 +61,7 @@ public:
     void print(bool nord) const
     {
         size_t start = start_.load(std::memory_order_acquire);
-        size_t size = size_.load(std::memory_order_acquire);
+        size_t size = end_.load(std::memory_order_acquire);
         if (nord)
         {
 
@@ -82,9 +81,9 @@ public:
         std::cout << std::endl;
     }
 
-    bool empty() const { return size_.load(std::memory_order_acquire) == 0ull; }
+    bool empty() const { return size() == 0ull; }
 
-    size_t size() const { return size_.load(std::memory_order_acquire); }
+    size_t size() const { return end_.load(std::memory_order_acquire) - start_.load(std::memory_order_acquire); }
 
 private:
     inline bool was_changed(size_t i, size_t prev_start) const
@@ -96,7 +95,7 @@ private:
     }
 private:
     std::atomic<size_t> start_;
-    std::atomic<size_t> size_;
+    std::atomic<size_t> end_;
     uint32_t period_;
     ElType *buffer_;
     size_t cap_;

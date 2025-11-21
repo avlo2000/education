@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cmath>
 #include <stdio.h>
+#include "seq_lock.h"
 
 template <class T>
 struct StampedElement
@@ -24,10 +25,7 @@ class StampedRingBuffer
 public:
     StampedRingBuffer(size_t cap) : cap_(cap)
     {
-        buffer_ = new ElType[cap_];
-        seq_lock_ = new std::atomic_flag[cap_];
-        for (size_t i = 0; i < cap_; ++i)
-            seq_lock_[i].clear();
+        buffer_ = new rigtorp::Seqlock<ElType>[cap_];
     }
 
     ~StampedRingBuffer()
@@ -45,9 +43,7 @@ public:
             size++;
         idx_.store({start, size}, std::memory_order_release);
         size_t end = (start + size - 1ull) % cap_;
-        seq_lock_[end].test_and_set(std::memory_order_acquire); // mark as being written
-        buffer_[end] = el;
-        seq_lock_[end].clear(std::memory_order_release); // mark as stable
+        buffer_[end].store(el);
     }
 
     // if size == 0 causes UB
@@ -107,17 +103,17 @@ public:
         {
             for (size_t i = 0; i < idx_.load(std::memory_order_acquire).size; ++i)
                 if (i != idx_.load(std::memory_order_acquire).start)
-                    std::cout << buffer_[i].ts << " ";
+                    std::cout << buffer_[i].load().ts << " ";
                 else
-                    std::cout << "[" << buffer_[i].ts << "] ";
+                    std::cout << "[" << buffer_[i].load().ts << "] ";
             std::cout << std::endl;
             return;
         }
         for (size_t i = 0; i < idx_.load(std::memory_order_acquire).size; ++i)
             if (i != idx_.load(std::memory_order_acquire).start)
-                std::cout << buffer_[(idx_.load(std::memory_order_acquire).start + i) % cap_].ts << " ";
+                std::cout << buffer_[(idx_.load(std::memory_order_acquire).start + i) % cap_].load().ts << " ";
             else
-                std::cout << "[" << buffer_[(idx_.load(std::memory_order_acquire).start + i) % cap_].ts << "] ";
+                std::cout << "[" << buffer_[(idx_.load(std::memory_order_acquire).start + i) % cap_].load().ts << "] ";
         std::cout << std::endl;
     }
 
@@ -140,10 +136,8 @@ private:
 
     inline bool try_get(ElType &el, size_t prev_start, size_t idx) const
     {
-        el = buffer_[idx];
-        bool is_locked = seq_lock_[idx].test_and_set(std::memory_order_acquire);
-        seq_lock_[idx].clear(std::memory_order_release);
-        return !is_locked && !was_changed(idx, prev_start);
+        el = buffer_[idx].load();
+        return !was_changed(idx, prev_start);
     }
 
     inline bool was_changed(size_t i, size_t prev_start) const
@@ -161,8 +155,7 @@ private:
         uint32_t size = 0;
     };
     std::atomic<Indexing> idx_ = {};
-    std::atomic_flag *seq_lock_{nullptr};
-    ElType *buffer_;
+    rigtorp::Seqlock<ElType> *buffer_;
     size_t cap_;
 };
 

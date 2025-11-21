@@ -1,4 +1,4 @@
-#include "stamped_buffer.hpp"
+#include "stamped_buffer_safe_but_slow.hpp"
 
 int main()
 {

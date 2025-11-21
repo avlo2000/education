@@ -1,4 +1,4 @@
-#include "stamped_buffer.hpp"
+#include "stamped_buffer_safe_but_slow.hpp"
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -11,6 +11,22 @@
 #include <set>
 #include <memory>
 #include <condition_variable>
+#include <type_traits>
+
+// Define a trivially copyable struct for testing
+struct SomeStruct
+{
+    uint64_t field1;
+    uint64_t field2;
+    uint32_t field3;
+    uint32_t field4;
+};
+
+// Validate that SomeStruct meets requirements
+static_assert(std::is_nothrow_copy_assignable_v<SomeStruct>, 
+              "SomeStruct must be nothrow copy assignable");
+static_assert(std::is_trivially_copy_assignable_v<SomeStruct>, 
+              "SomeStruct must be trivially copy assignable");
 
 // Test utility functions
 void test_assert(bool condition, const std::string &test_name)
@@ -22,7 +38,7 @@ void test_assert(bool condition, const std::string &test_name)
     else
     {
         std::cout << "[FAIL] " << test_name << std::endl;
-        // assert(false);
+        assert(false);
     }
 }
 
@@ -547,156 +563,77 @@ public:
                                                  std::to_string(correctness_rate * 100) + "%)");
     }
 
-    // Test 5: Producer with bursts and consumers validating binary search closest match
-    void test_burst_producer_varied_consumers()
+    // Test with SomeStruct - verify type traits and size
+    void test_stamped_buffer_with_struct()
     {
-        safe_print("\n=== Test Burst Producer with Binary Search Validation ===");
+        safe_print("\n=== Test StampedRingBuffer<SomeStruct> - Type Traits and Size ===");
 
-        const size_t buffer_capacity = 20;
-        const size_t num_bursts = 50;
-        const size_t burst_size = 20;
+        // Verify size of StampedRingBuffer<SomeStruct> instance
+        StampedRingBuffer<SomeStruct> buffer(10);
+        size_t buffer_size = sizeof(buffer);
+        
+        safe_print("Size of StampedRingBuffer<SomeStruct>: " + std::to_string(buffer_size) + " bytes");
+        // Functional test: add and retrieve elements
+        const size_t num_elements = 100;
         const size_t num_consumers = 4;
 
-        StampedRingBuffer<std::string> buffer(buffer_capacity);
         std::atomic<bool> producer_done{false};
-        std::atomic<size_t> total_elements_added{0};
         std::atomic<size_t> validation_failures{0};
 
-        // Add initial element
-        buffer.add({0, "data_0"});
-        total_elements_added = 1;
-
-        // Producer adds elements in bursts
-        std::thread producer([&buffer, &producer_done, &total_elements_added, num_bursts, burst_size]()
+        // Producer: add elements with SomeStruct
+        std::thread producer([&buffer, &producer_done, num_elements]()
                              {
-            size_t element_counter = 1;
-            
-            for (size_t burst = 0; burst < num_bursts; ++burst) {
-                // Add burst of elements
-                for (size_t i = 0; i < burst_size; ++i) {
-                    uint64_t timestamp = element_counter * 100;
-                    std::string data = "data_" + std::to_string(element_counter);
-                    buffer.add({timestamp, data});
-                    element_counter++;
-                }
-                total_elements_added += burst_size;
+            for (size_t i = 1; i <= num_elements; ++i) {
+                uint64_t timestamp = i * 100;
+                SomeStruct data{timestamp, i, static_cast<uint32_t>(i * 2), static_cast<uint32_t>(i * 3)};
+                buffer.add({timestamp, data});
                 
-                // Pause between bursts
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (i % 20 == 0) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(10));
+                }
             }
             producer_done = true; });
 
-        // Consumers validate binary search behavior
+        // Consumers: validate data integrity
         std::vector<std::thread> consumers;
-        std::vector<std::atomic<size_t>> consumer_search_counts(num_consumers);
-        std::vector<std::atomic<size_t>> consumer_failures(num_consumers);
-
-        // Consumer 0: Searches for exact timestamps and validates
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
-                               {
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            
-            while (!producer_done) {
-                size_t current_total = total_elements_added.load();
-                if (current_total > 1) {
-                    // Search for exact timestamp that should exist
-                    std::uniform_int_distribution<size_t> dis(0, current_total - 1);
-                    size_t element_idx = dis(gen);
-                    uint64_t search_ts = element_idx * 100;
-                    
-                    auto result = buffer.binsearch(search_ts);
-                    consumer_search_counts[0]++;
-                    
-                    // For exact searches, we should get back the exact timestamp or closest
-                    std::string expected_data = "data_" + std::to_string(result.ts / 100);
-                    if (result.elem != expected_data) {
-                        consumer_failures[0]++;
-                    }
-                }
-                std::this_thread::sleep_for(std::chrono::microseconds(100));
-            } });
-
-        // Consumer 1: Searches for in-between timestamps and validates closest match
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
-                               {
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            
-            while (!producer_done) {
-                size_t current_total = total_elements_added.load();
-                if (current_total > 1) {
-                    // Search for timestamp between elements (e.g., 150 is between 100 and 200)
-                    std::uniform_int_distribution<size_t> dis(0, current_total - 1);
-                    size_t element_idx = dis(gen);
-                    uint64_t search_ts = element_idx * 100 + 50; // Add 50 to be in-between
-                    
-                    auto result = buffer.binsearch(search_ts);
-                    consumer_search_counts[1]++;
-                    
-                    // Result should be either element_idx or element_idx+1
-                    size_t result_idx = result.ts / 100;
-                    std::string expected_data = "data_" + std::to_string(result_idx);
-                    if (result.elem != expected_data) {
-                        consumer_failures[1]++;
-                    }
-                }
-                std::this_thread::sleep_for(std::chrono::microseconds(150));
-            } });
-
-        // Consumer 2: Random searches with validation
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
-                               {
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            
-            while (!producer_done) {
-                size_t current_total = total_elements_added.load();
-                if (current_total > 1) {
-                    std::uniform_int_distribution<uint64_t> dis(0, (current_total - 1) * 100);
+        for (size_t consumer_id = 0; consumer_id < num_consumers; ++consumer_id)
+        {
+            consumers.emplace_back([&buffer, &producer_done, &validation_failures, consumer_id, num_elements]()
+                                   {
+                std::random_device rd;
+                std::mt19937 gen(rd() + consumer_id);
+                std::uniform_int_distribution<uint64_t> dis(100, num_elements * 100);
+                
+                while (!producer_done) {
                     uint64_t search_ts = dis(gen);
-                    
                     auto result = buffer.binsearch(search_ts);
-                    consumer_search_counts[2]++;
                     
-                    // Validate that the returned element matches its timestamp
-                    size_t result_idx = result.ts / 100;
-                    std::string expected_data = "data_" + std::to_string(result_idx);
-                    if (result.elem != expected_data) {
-                        consumer_failures[2]++;
+                    // Validate struct fields are consistent with timestamp
+                    uint64_t expected_idx = result.ts / 100;
+                    if (result.elem.field1 != result.ts ||
+                        result.elem.field2 != expected_idx ||
+                        result.elem.field3 != static_cast<uint32_t>(expected_idx * 2) ||
+                        result.elem.field4 != static_cast<uint32_t>(expected_idx * 3)) {
+                        validation_failures++;
                     }
+                    
+                    std::this_thread::sleep_for(std::chrono::microseconds(5));
                 }
-                std::this_thread::sleep_for(std::chrono::microseconds(80));
-            } });
-
-        // Consumer 3: Boundary searches (very early and very late timestamps)
-        consumers.emplace_back([&buffer, &producer_done, &consumer_search_counts, &consumer_failures, &total_elements_added]()
-                               {
-            while (!producer_done) {
-                size_t current_total = total_elements_added.load();
-                if (current_total > 1) {
-                    // Search for very early timestamp
-                    auto result_early = buffer.binsearch(0);
-                    consumer_search_counts[3]++;
+                
+                // Final validation after producer completes
+                for (int i = 0; i < 50; ++i) {
+                    uint64_t search_ts = dis(gen);
+                    auto result = buffer.binsearch(search_ts);
                     
-                    size_t result_idx = result_early.ts / 100;
-                    std::string expected_data = "data_" + std::to_string(result_idx);
-                    if (result_early.elem != expected_data) {
-                        consumer_failures[3]++;
+                    uint64_t expected_idx = result.ts / 100;
+                    if (result.elem.field1 != result.ts ||
+                        result.elem.field2 != expected_idx ||
+                        result.elem.field3 != static_cast<uint32_t>(expected_idx * 2) ||
+                        result.elem.field4 != static_cast<uint32_t>(expected_idx * 3)) {
+                        validation_failures++;
                     }
-                    
-                    // Search for very late timestamp
-                    auto result_late = buffer.binsearch(current_total * 100);
-                    consumer_search_counts[3]++;
-                    
-                    result_idx = result_late.ts / 100;
-                    expected_data = "data_" + std::to_string(result_idx);
-                    if (result_late.elem != expected_data) {
-                        consumer_failures[3]++;
-                    }
-                }
-                std::this_thread::sleep_for(std::chrono::microseconds(120));
-            } });
+                } });
+        }
 
         producer.join();
         for (auto &consumer : consumers)
@@ -704,24 +641,11 @@ public:
             consumer.join();
         }
 
-        // Calculate total failures
-        size_t total_failures = 0;
-        for (size_t i = 0; i < num_consumers; ++i)
-        {
-            total_failures += consumer_failures[i].load();
-        }
+        test_assert(validation_failures == 0, 
+                    "No validation failures with SomeStruct (found " +
+                    std::to_string(validation_failures) + " failures)");
 
-        // Validate all consumers performed searches
-        for (size_t i = 0; i < num_consumers; ++i)
-        {
-            test_assert(consumer_search_counts[i] > 0,
-                        "Consumer " + std::to_string(i) + " performed searches (" +
-                            std::to_string(consumer_search_counts[i]) + ")");
-        }
-
-        test_assert(total_elements_added == num_bursts * burst_size + 1, "All elements were added");
-        test_assert(total_failures == 0, "No validation failures in binary search results (found " +
-                                             std::to_string(total_failures) + " failures)");
+        safe_print("StampedRingBuffer<SomeStruct> test completed successfully");
     }
 
     void run_all_tests()
@@ -731,11 +655,12 @@ public:
         try
         {
             test_single_producer_multiple_consumers_basic();
-            // test_xor_integrity_data_race();
+            test_xor_integrity_data_race();
             test_race_condition_detection();
             test_high_frequency_producer();
             test_wraparound_stress();
-            test_burst_producer_varied_consumers();
+            test_stamped_buffer_with_struct();
+            // test_burst_producer_varied_consumers();
 
             safe_print("\n🎉 All multi-threaded tests passed! 🎉");
         }

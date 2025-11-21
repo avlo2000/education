@@ -1,4 +1,4 @@
-#include "stamped_buffer.hpp"
+#include "stamped_buffer_safe_but_slow.hpp"
 #include <vector>
 #include <cassert>
 #include <algorithm>
