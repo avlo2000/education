@@ -213,13 +213,13 @@ public:
                     if (result.ts > num_elements * 2) {
                         ++local_inconsistent;
                     }
-                    // auto oldest = buffer.get_oldest();
-                    // auto newest = buffer.get_newest();
-                    // if (oldest.ts > newest.ts) {
-                    //     ++local_inconsistent;
-                    //     // assert(oldest.ts - newest.ts == 2);
-                    //     std::cout << "Oldest-newest inversion: diff " << oldest.ts - newest.ts << std::endl;
-                    // }
+                    auto oldest = buffer.get_oldest();
+                    auto newest = buffer.get_newest();
+                    if (oldest.ts > newest.ts) {
+                        ++local_inconsistent;
+                        // assert(oldest.ts - newest.ts == 2);
+                        std::cout << "Oldest-newest inversion: diff " << oldest.ts - newest.ts << std::endl;
+                    }
                 }
                 
                 // Continue testing for a bit after producer finishes
@@ -235,14 +235,14 @@ public:
 
                     // Final rounds also verify oldest <= newest
                     if ((i % 10) == 0) {
-                        // auto oldest = buffer.get_oldest();
-                        // auto newest = buffer.get_newest();
-                        // if (oldest.ts > newest.ts) {
-                        //     ++local_inconsistent;
-                        //     assert(oldest.ts - newest.ts == 2);
-                        //     assert(false);
-                        //     std::cout << "Oldest-newest inversion: diff " << oldest.ts - newest.ts << std::endl;
-                        // }
+                        auto oldest = buffer.get_oldest();
+                        auto newest = buffer.get_newest();
+                        if (oldest.ts > newest.ts) {
+                            ++local_inconsistent;
+                            assert(oldest.ts - newest.ts == 2);
+                            assert(false);
+                            std::cout << "Oldest-newest inversion: diff " << oldest.ts - newest.ts << std::endl;
+                        }
                     }
                 }
                 
@@ -660,13 +660,12 @@ public:
             test_high_frequency_producer();
             test_wraparound_stress();
             test_stamped_buffer_with_struct();
-            // test_burst_producer_varied_consumers();
 
-            safe_print("\n🎉 All multi-threaded tests passed! 🎉");
+            safe_print("\nAll multi-threaded tests passed!");
         }
         catch (const std::exception &e)
         {
-            safe_print("\n❌ Multi-threaded test failed with exception: " + std::string(e.what()));
+            safe_print("\nMulti-threaded test failed with exception: " + std::string(e.what()));
             throw;
         }
     }

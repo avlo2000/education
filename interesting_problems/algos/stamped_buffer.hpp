@@ -5,13 +5,13 @@
 #include <cassert>
 #include <cmath>
 #include <stdio.h>
+#include "seq_lock.h"
 
 template <class T>
 struct StampedElement
 {
     StampedElement() : ts(0), elem() {}
     StampedElement(uint64_t ts, T elem) : ts(ts), elem(elem) {}
-    uint64_t _pad[2]; // padding to avoid false sharing. May be adjusted for better performance
     uint64_t ts;
     T elem;
 };
@@ -24,12 +24,7 @@ class StampedRingBuffer
 public:
     StampedRingBuffer(size_t cap) : cap_(cap)
     {
-        buffer_ = new ElType[cap_];
-        epoch_ = new std::atomic<uint8_t>[cap_];
-        start_.store(0);
-        size_.store(0);
-        for (size_t i = 0; i < cap_; ++i)
-            epoch_[i].store(0, std::memory_order_relaxed);
+        buffer_ = new rigtorp::Seqlock<ElType>[cap_];
     }
 
     ~StampedRingBuffer()
@@ -40,34 +35,73 @@ public:
     // supports only single producer
     void add(const ElType &el)
     {
-        size_t start = start_.load(std::memory_order_acquire);
-        size_t size = size_.load(std::memory_order_acquire);
-        if (size == cap_) {
+        auto [start, size] = idx_.load(std::memory_order_relaxed);
+        if (size == cap_)
             start = (start + 1) % cap_;
-            start_.store(start, std::memory_order_release);
-        }
-        else {
+        else
             size++;
-            size_.store(size, std::memory_order_release);
-        }
-
+        idx_.store({start, size}, std::memory_order_release);
         size_t end = (start + size - 1ull) % cap_;
-        buffer_[end] = el;
-        epoch_[end].fetch_add(1, std::memory_order_release); // element end is in new epoch
+        buffer_[end].store(el);
     }
 
+    ElType get_oldest() const
+    {
+        size_t start = idx_.load(std::memory_order_acquire).start;
+        return get(start, start);
+    }
+
+    ElType get_newest() const
+    {
+        auto [start, size] = idx_.load(std::memory_order_acquire);
+        size_t end = (start + size - 1ull) % cap_;
+        return get(end, end);
+    }
+
+    ElType binsearch(uint64_t ts) const
+    {
+        auto [start, len] = idx_.load(std::memory_order_acquire);
+        return binsearch(ts, start, len);
+    }
+
+    // Not thread safe
+    void print(bool nord) const
+    {
+        if (nord)
+        {
+            for (size_t i = 0; i < idx_.load(std::memory_order_acquire).size; ++i)
+                if (i != idx_.load(std::memory_order_acquire).start)
+                    std::cout << buffer_[i].load().ts << " ";
+                else
+                    std::cout << "[" << buffer_[i].load().ts << "] ";
+            std::cout << std::endl;
+            return;
+        }
+        for (size_t i = 0; i < idx_.load(std::memory_order_acquire).size; ++i)
+            if (i != idx_.load(std::memory_order_acquire).start)
+                std::cout << buffer_[(idx_.load(std::memory_order_acquire).start + i) % cap_].load().ts << " ";
+            else
+                std::cout << "[" << buffer_[(idx_.load(std::memory_order_acquire).start + i) % cap_].load().ts << "] ";
+        std::cout << std::endl;
+    }
+
+    bool empty() const { return idx_.load(std::memory_order_acquire).size == 0ull; }
+
+    size_t size() const { return idx_.load(std::memory_order_acquire).size; }
+
+private:
     // if size == 0 causes UB
     ElType binsearch(uint64_t ts, size_t first, size_t len) const
     {
-        uint8_t epoch = epoch_[first + 1].load(std::memory_order_acquire);
         size_t first_rel = 0;
         while (len > 0ull)
         {
             size_t half = len >> 1;
             size_t mid_rel = first_rel + half;
             size_t mid = (first + mid_rel) % cap_;
-
-            if (atomic_get(epoch, mid).ts < ts)
+            // if mid was changed during bisect in case if should exit
+            // it doesn't gurantee optimal result, but prevents race condition
+            if (get(first, mid).ts < ts)
             {
                 first_rel = mid_rel + 1;
                 len = len - half - 1ull;
@@ -77,75 +111,50 @@ public:
                 len = half;
             }
         }
-        size_t size = size_.load(std::memory_order_acquire);
+        size_t size = idx_.load(std::memory_order_acquire).size;
         if (first_rel >= size)
         {
             first_rel = size - 1;
         }
         size_t idx = (first + first_rel) % cap_;
-        ElType el_first = atomic_get(epoch, idx);
+        ElType el_first = get(first, idx);
         return el_first;
     }
 
-    ElType binsearch(uint64_t ts) const
+    inline ElType get(size_t prev_start, size_t &idx) const
     {
-        size_t start = start_.load(std::memory_order_acquire);
-        size_t size = size_.load(std::memory_order_acquire);
-        return binsearch(ts, start, size);
-    }
-
-    // Not thread safe
-    void print(bool nord) const
-    {
-        size_t start = start_.load(std::memory_order_acquire);
-        size_t size = size_.load(std::memory_order_acquire);
-        if (nord)
-        {
-
-            for (size_t i = 0; i < size; ++i)
-                if (i != start)
-                    std::cout << buffer_[i].ts << " ";
-                else
-                    std::cout << "[" << buffer_[i].ts << "] ";
-            std::cout << std::endl;
-            return;
-        }
-        for (size_t i = 0; i < size; ++i)
-            if (i != start)
-                std::cout << buffer_[(start + i) % cap_].ts << " ";
-            else
-                std::cout << "[" << buffer_[(start + i) % cap_].ts << "] ";
-        std::cout << std::endl;
-    }
-
-    bool empty() const { return size_.load(std::memory_order_acquire) == 0ull; }
-
-    size_t size() const { return size_.load(std::memory_order_acquire); }
-
-private:
-    inline ElType atomic_get_oldest(uint8_t epoch) const {
-        size_t start = start_.load(std::memory_order_acquire);
-        return atomic_get(start);
-    }
-
-    inline ElType atomic_get(uint8_t epoch, size_t &idx) const {
-        size_t size = size_.load(std::memory_order_acquire);
         ElType el;
-        el = buffer_[idx];
-        size_t roll_over_sz = size;
-        while(epoch_[idx].load(std::memory_order_acquire) - epoch == 1) {
-            idx = (idx + 1) % size;
-            if(roll_over_sz-- == 0) { epoch++; idx = start_.load(std::memory_order_acquire); };
-            el = buffer_[idx];
+        while (!try_get(el, prev_start, idx))
+        {
+            ++idx;
+            if (idx == idx_.load(std::memory_order_acquire).size) idx = 0;
+            idx %= cap_;
         }
         return el;
     }
 
+    inline bool try_get(ElType &el, size_t prev_start, size_t idx) const
+    {
+        el = buffer_[idx].load();
+        return !was_changed(idx, prev_start);
+    }
+
+    inline bool was_changed(size_t i, size_t prev_start) const
+    {
+        size_t start = idx_.load(std::memory_order_acquire).start;
+        if (start >= prev_start)
+            return (i >= prev_start) && (i < start);
+        return (i >= prev_start) || (i < start);
+    }
+
 private:
-    std::atomic<size_t> start_;
-    std::atomic<size_t> size_;
-    std::atomic<uint8_t> *epoch_{};
-    ElType *buffer_;
+    struct Indexing
+    {
+        uint32_t start = 0;
+        uint32_t size = 0;
+    };
+    std::atomic<Indexing> idx_ = {};
+    rigtorp::Seqlock<ElType> *buffer_;
     size_t cap_;
 };
 
