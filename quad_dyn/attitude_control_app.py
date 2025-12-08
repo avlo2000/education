@@ -12,14 +12,12 @@ class SimulationState:
     def __init__(self):
         self.needs_update = True
         self.traj = DroneTraj()
-        
-        # Setpoints
+
         self.target_roll = 0.0
         self.target_pitch = 0.0
         self.target_yaw = 0.0
         self.target_climb_rate = 0.0
-        
-        # Params
+
         self.att_ctrl_params = AttitudeControlParams()
 
 sim_state = SimulationState()
@@ -27,7 +25,7 @@ sim_state = SimulationState()
 def pid_ui(label: str, params: PIDParams) -> bool:
     changed = False
     if imgui.tree_node(label):
-        if imgui.is_item_deactivated_after_edit(): params.P = imgui.get_item_rect_min()[0] # This is wrong usage of imgui python bindings for simple types
+        if imgui.is_item_deactivated_after_edit(): params.P = imgui.get_item_rect_min()[0]
         
         c, params.P = imgui.slider_float(f"P##{label}", params.P, 0.0, 50.0)
         changed |= c
@@ -71,6 +69,7 @@ def run_simulation():
     dyn.state.p = np.array([0.0, 0.0, 0.0])
     dyn.state.q = np.array([1.0, 0.0, 0.0, 0.0])
     
+    #TODO use RK4 integrator
     for i in range(steps):
         state = dyn.state
         ps[i] = state.p
@@ -97,9 +96,8 @@ def run_simulation():
 
     sim_state.traj = DroneTraj()
     sim_state.traj.set_data(ps, qs, ts)
-    
-    # Convert quaternions to euler for plotting
-    r_act = Rotation.from_quat(qs[:, [1, 2, 3, 0]]) # scipy uses x,y,z,w
+
+    r_act = Rotation.from_quat(qs[:, [1, 2, 3, 0]])
     euler_act = r_act.as_euler('xyz', degrees=True)
     
     r_des = Rotation.from_quat(qs_des[:, [1, 2, 3, 0]])
@@ -128,8 +126,8 @@ def gui():
 
     if imgui.begin("PID Tuning"):
         changed = False
-        changed |= pid_ui("Pitch Rate PID", sim_state.att_ctrl_params.pitch_rate_pid)
         changed |= pid_ui("Roll Rate PID", sim_state.att_ctrl_params.roll_rate_pid)
+        changed |= pid_ui("Pitch Rate PID", sim_state.att_ctrl_params.pitch_rate_pid)
         changed |= pid_ui("Yaw Rate PID", sim_state.att_ctrl_params.yaw_rate_pid)
         changed |= pid_ui("Thrust PID", sim_state.att_ctrl_params.thrust_pid)
         

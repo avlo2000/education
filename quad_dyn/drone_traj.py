@@ -144,7 +144,6 @@ def main():
     runner_params.app_window_params.window_title = "Drone Trajectory"
     runner_params.app_window_params.window_geometry.size = (1280, 720)
 
-    # Initialize implot3d
     def post_init():
         implot3d.create_context()
         implot.create_context()
