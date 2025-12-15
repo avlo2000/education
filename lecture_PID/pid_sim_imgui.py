@@ -25,19 +25,11 @@ class PIDSimulator:
         den = [1, 0]
         return ct.tf(num, den)
     
-    def simulate_step_response(self, kp=1.0, ki=0.1, kd=0.01, latency=0.0, kff=0.0, kdf=0.0):
-        """Simulate closed-loop step response with latency"""
-        try:
-            # Use time-domain simulation for all cases to support FF terms and latency consistently
-            return self._simulate_time_domain(kp, ki, kd, latency, kff, kdf)
-                
-        except Exception as e:
-            print(f"Simulation error: {e}")
-            # Return zeros if simulation fails
-            zeros = np.zeros_like(self.time)
-            return self.time, zeros, zeros, zeros, zeros, zeros, zeros, zeros, zeros
+    def simulate_step_response(self, kp=1.0, ki=0.1, kd=0.01, latency=0.0, kff=0.0, kdf=0.0, disturbance=0.0):
+        return self._simulate_time_domain(kp, ki, kd, latency, kff, kdf, disturbance)
+
     
-    def _simulate_time_domain(self, kp, ki, kd, latency, kff, kdf):
+    def _simulate_time_domain(self, kp, ki, kd, latency, kff, kdf, disturbance):
         dt = self.time[1] - self.time[0] if len(self.time) > 1 else 0.01
 
         output = np.zeros_like(self.time)
@@ -92,7 +84,7 @@ class PIDSimulator:
             control[i] = p_term[i] + i_term[i] + d_term[i] + ff_term[i] + df_term[i]
 
             position, velocity = plant_state
-            acceleration = (control[i] - self.damping_b * velocity - self.spring_k * position) / self.mass
+            acceleration = (control[i] + disturbance - self.damping_b * velocity - self.spring_k * position) / self.mass
 
             new_velocity = velocity + acceleration * dt
             new_position = position + new_velocity * dt
@@ -119,7 +111,7 @@ class PIDSimulator:
         
         try:
             step_info = ct.step_info(closed_loop)
-        except:
+        except Exception:
             step_info = {'SettlingTime': 0, 'Overshoot': 0}
         
         return {
@@ -139,21 +131,38 @@ def update_plots(sender, app_data, user_data):
     kff = dpg.get_value("kff_input")
     kdf = dpg.get_value("kdf_input")
     latency = dpg.get_value("latency_input")
+    disturbance = dpg.get_value("disturbance_input")
     
-    time, output, control_signal, error, p_term, i_term, d_term, ff_term, df_term = sim.simulate_step_response(kp, ki, kd, latency, kff, kdf)
+    time, output, control_signal, error, p_term, i_term, d_term, ff_term, df_term = sim.simulate_step_response(kp, ki, kd, latency, kff, kdf, disturbance)
 
     dpg.set_value("series_output", [time, output])
     dpg.set_value("series_setpoint", [time, np.ones_like(time)])
     dpg.fit_axis_data("axis_x_step")
     dpg.fit_axis_data("axis_y_step")
 
-    dpg.set_value("series_control", [time, control_signal])
-    dpg.fit_axis_data("axis_x_control")
-    dpg.fit_axis_data("axis_y_control")
+    # FFT Calculations
+    dt = time[1] - time[0] if len(time) > 1 else 0.01
+    n = len(time)
+    freqs = np.fft.rfftfreq(n, d=dt)
+    
+    setpoint = np.ones_like(time)
+    
+    def to_db(mag):
+        return 20 * np.log10(mag + 1e-9)
 
-    dpg.set_value("series_error", [time, error])
-    dpg.fit_axis_data("axis_x_error")
-    dpg.fit_axis_data("axis_y_error")
+    input_fft = to_db(np.abs(np.fft.rfft(setpoint)) / n)
+    output_fft = to_db(np.abs(np.fft.rfft(output)) / n)
+    feedback = setpoint - error
+    feedback_fft = to_db(np.abs(np.fft.rfft(feedback)) / n)
+
+    dpg.set_value("series_spectrum_input", [freqs, input_fft])
+    dpg.set_value("series_spectrum_output", [freqs, output_fft])
+    dpg.fit_axis_data("axis_x_spectrum_io")
+    dpg.fit_axis_data("axis_y_spectrum_io")
+
+    dpg.set_value("series_spectrum_feedback", [freqs, feedback_fft])
+    dpg.fit_axis_data("axis_x_spectrum_fb")
+    dpg.fit_axis_data("axis_y_spectrum_fb")
 
     dpg.set_value("series_p", [time, p_term])
     dpg.set_value("series_i", [time, i_term])
@@ -168,21 +177,21 @@ def update_plots(sender, app_data, user_data):
     
     step_info = info['step_info']
     if step_info and 'SettlingTime' in step_info:
-            dpg.set_value("info_settling", f"Settling Time: {step_info['SettlingTime']:.2f} s")
+        dpg.set_value("info_settling", f"Settling Time: {step_info['SettlingTime']:.2f} s")
     else:
-            dpg.set_value("info_settling", "Settling Time: N/A")
+        dpg.set_value("info_settling", "Settling Time: N/A")
             
     if step_info and 'Overshoot' in step_info:
-            dpg.set_value("info_overshoot", f"Overshoot: {step_info['Overshoot']:.2f} %")
+        dpg.set_value("info_overshoot", f"Overshoot: {step_info['Overshoot']:.2f} %")
     else:
-            dpg.set_value("info_overshoot", "Overshoot: N/A")
+        dpg.set_value("info_overshoot", "Overshoot: N/A")
 
 def main():
     dpg.create_context()
-    dpg.create_viewport(title='PID Simulator', width=1200, height=800)
+    dpg.create_viewport(title='PID Simulator', width=1600, height=1000)
     dpg.setup_dearpygui()
 
-    with dpg.window(label="Controls", width=300, height=800, pos=(0, 0)):
+    with dpg.window(label="Controls", width=700, height=1000, pos=(0, 0)):
         dpg.add_text("PID Parameters")
         dpg.add_slider_float(label="Kp", tag="kp_input", default_value=1.0, min_value=0.0, max_value=50.0, callback=update_plots)
         dpg.add_slider_float(label="Ki", tag="ki_input", default_value=0.1, min_value=0.0, max_value=20.0, callback=update_plots)
@@ -190,6 +199,7 @@ def main():
         dpg.add_slider_float(label="Kff", tag="kff_input", default_value=0.0, min_value=0.0, max_value=20.0, callback=update_plots)
         dpg.add_slider_float(label="Kdf", tag="kdf_input", default_value=0.0, min_value=0.0, max_value=5.0, callback=update_plots)
         dpg.add_slider_float(label="Latency (s)", tag="latency_input", default_value=0.0, min_value=0.0, max_value=2.0, callback=update_plots)
+        dpg.add_slider_float(label="Disturbance", tag="disturbance_input", default_value=0.0, min_value=-10.0, max_value=10.0, callback=update_plots)
         
         dpg.add_separator()
         dpg.add_text("System Info")
@@ -203,21 +213,22 @@ def main():
         dpg.add_text(f"Spring K: {sim.spring_k}")
         dpg.add_text(f"Damping B: {sim.damping_b}")
 
-    with dpg.window(label="Plots", width=900, height=800, pos=(300, 0)):
-        with dpg.plot(label="Step Response", height=200, width=-1):
+    with dpg.window(label="Plots", width=1200, height=1000, pos=(400, 0)):
+        with dpg.plot(label="Step Response", height=240, width=-1):
             dpg.add_plot_legend()
             dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)", tag="axis_x_step")
             with dpg.plot_axis(dpg.mvYAxis, label="Amplitude", tag="axis_y_step"):
                 dpg.add_line_series([], [], label="Output", tag="series_output")
                 dpg.add_line_series([], [], label="Setpoint", tag="series_setpoint")
 
-        with dpg.plot(label="Control Signal", height=200, width=-1):
+        with dpg.plot(label="Input & Output Spectrum", height=240, width=-1):
             dpg.add_plot_legend()
-            dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)", tag="axis_x_control")
-            with dpg.plot_axis(dpg.mvYAxis, label="Control Output", tag="axis_y_control"):
-                dpg.add_line_series([], [], label="Control Signal", tag="series_control")
+            dpg.add_plot_axis(dpg.mvXAxis, label="Frequency (Hz)", tag="axis_x_spectrum_io")
+            with dpg.plot_axis(dpg.mvYAxis, label="Magnitude (dB)", tag="axis_y_spectrum_io"):
+                dpg.add_line_series([], [], label="Input", tag="series_spectrum_input")
+                dpg.add_line_series([], [], label="Output", tag="series_spectrum_output")
 
-        with dpg.plot(label="PID Terms", height=200, width=-1):
+        with dpg.plot(label="PID Terms", height=240, width=-1):
             dpg.add_plot_legend()
             dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)", tag="axis_x_pid")
             with dpg.plot_axis(dpg.mvYAxis, label="Value", tag="axis_y_pid"):
@@ -227,11 +238,11 @@ def main():
                 dpg.add_line_series([], [], label="FF Term", tag="series_ff")
                 dpg.add_line_series([], [], label="DF Term", tag="series_df")
 
-        with dpg.plot(label="Error", height=200, width=-1):
+        with dpg.plot(label="Feedback Spectrum", height=240, width=-1):
             dpg.add_plot_legend()
-            dpg.add_plot_axis(dpg.mvXAxis, label="Time (s)", tag="axis_x_error")
-            with dpg.plot_axis(dpg.mvYAxis, label="Error", tag="axis_y_error"):
-                dpg.add_line_series([], [], label="Error", tag="series_error")
+            dpg.add_plot_axis(dpg.mvXAxis, label="Frequency (Hz)", tag="axis_x_spectrum_fb")
+            with dpg.plot_axis(dpg.mvYAxis, label="Magnitude (dB)", tag="axis_y_spectrum_fb"):
+                dpg.add_line_series([], [], label="Feedback", tag="series_spectrum_feedback")
 
     update_plots(None, None, None)
 

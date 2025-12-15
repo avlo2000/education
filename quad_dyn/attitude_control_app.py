@@ -25,7 +25,7 @@ sim_state = SimulationState()
 def pid_ui(label: str, params: PIDParams) -> bool:
     changed = False
     if imgui.tree_node(label):
-        if imgui.is_item_deactivated_after_edit(): params.P = imgui.get_item_rect_min()[0] # This is wrong usage of imgui python bindings for simple types
+        if imgui.is_item_deactivated_after_edit(): params.P = imgui.get_item_rect_min()[0]
         
         c, params.P = imgui.slider_float(f"P##{label}", params.P, 0.0, 50.0)
         changed |= c
