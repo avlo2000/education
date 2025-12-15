@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
+from scipy.integrate import solve_ivp
 
 from spatial import quat_mul
 
@@ -58,6 +59,18 @@ class ThrustDynamicsState:
             w=self.w + other.w,
         )
 
+    @classmethod
+    def from_vector(cls, y: np.ndarray):
+        return cls(
+            p=y[0:3],
+            q=y[3:7],
+            v=y[7:10],
+            w=y[10:13],
+        )
+
+    def to_vector(self) -> np.ndarray:
+        return np.concatenate([self.p, self.q, self.v, self.w])
+
 
 class ThrustDynamics:
     def __init__(self, params: ThrustDynamicsParams):
@@ -71,23 +84,22 @@ class ThrustDynamics:
         self.r2 = np.array([d, d, 0.0]) / np.sqrt(2)
         self.r3 = np.array([-d, d, 0.0]) / np.sqrt(2)
         self.params = params
-        self.state = ThrustDynamicsState.zero_state()
 
-    def _dpos_dt(self) -> np.ndarray:
-        return self.state.v
+    def _dpos_dt(self, state: ThrustDynamicsState) -> np.ndarray:
+        return state.v
 
-    def _dquat_dt(self) -> np.ndarray:
-        w = self.state.w
-        q = self.state.q
+    def _dquat_dt(self, state: ThrustDynamicsState) -> np.ndarray:
+        w = state.w
+        q = state.q
         q_w = np.array([0.0, *w])
         dq = 0.5 * quat_mul(q, q_w, w_first=True)
         return dq
 
-    def _dvel_dt(self, omega: np.ndarray) -> np.ndarray:
+    def _dvel_dt(self, omega: np.ndarray, state: ThrustDynamicsState) -> np.ndarray:
         F_g = np.array([0.0, 0.0, -self.params.mass * self.params.g])
         F_bf = self.params.Cl * omega**2
         F_total_bf = np.array([0.0, 0.0, np.sum(F_bf)])
-        R = Rotation.from_quat(self.state.q, scalar_first=True)
+        R = Rotation.from_quat(state.q, scalar_first=True)
         F_total_wf = R.apply(F_total_bf) + F_g
         acc = F_total_wf / self.params.mass
 
@@ -99,13 +111,13 @@ class ThrustDynamics:
                   np.cross(self.r2, np.array([0.0, 0.0, F_bf[2]])) +
                   np.cross(self.r3, np.array([0.0, 0.0, F_bf[3]])))
         tau_bw[2] += tau_prop[0] + tau_prop[1] + tau_prop[2] + tau_prop[3]
-        dw = np.linalg.inv(self.I) @ (tau_bw - np.cross(self.state.w, self.I @ self.state.w))
+        dw = np.linalg.inv(self.I) @ (tau_bw - np.cross(state.w, self.I @ state.w))
         return acc, dw
 
-    def dx_dt(self, omega: np.ndarray) -> ThrustDynamicsState:
-        dp = self._dpos_dt()
-        dq = self._dquat_dt()
-        dv, dw = self._dvel_dt(omega)
+    def dx_dt(self, omega: np.ndarray, state: ThrustDynamicsState) -> ThrustDynamicsState:
+        dp = self._dpos_dt(state)
+        dq = self._dquat_dt(state)
+        dv, dw = self._dvel_dt(omega, state)
         return ThrustDynamicsState(p=dp, q=dq, v=dv, w=dw)
 
 
@@ -125,19 +137,22 @@ def main():
     qs = np.zeros((steps, 4))
 
     w_hover = np.sqrt(params.mass * params.g / (4 * params.Cl))
-    w_cmd = w_hover * 1.0 # 5% more thrust to fly up
-    omega = np.array([w_cmd, w_cmd, w_cmd + 0.01, w_cmd])
+    w_cmd = w_hover * 1.0
+    omega = np.array([w_cmd * 0.1, w_cmd, w_cmd * 0.9, w_cmd])
     
-    state = dyn.state
-    
-    for i in range(steps):
-        ps[i] = state.p
-        qs[i] = state.q
 
-        dstate = dyn.dx_dt(omega)
-        state = state + dstate * dt
-        state.q = state.q / np.linalg.norm(state.q)
-        dyn.state = state
+    
+    def ode(_, y):
+        dstate = dyn.dx_dt(omega, ThrustDynamicsState.from_vector(y))
+        return dstate.to_vector()
+
+    state = ThrustDynamicsState.zero_state()
+    sol = solve_ivp(ode, [0, T], state.to_vector(), t_eval=ts, method='RK45')
+    for i in range(steps):
+        s = ThrustDynamicsState.from_vector(sol.y[:, i])
+        ps[i] = s.p
+        qs[i] = s.q
+        print(f"Step {i}, Time {ts[i]:.2f}s, Position: {s.p}, Quaternion: {s.q}")
 
     traj = DroneTraj()
     traj.set_data(ps, qs, ts)

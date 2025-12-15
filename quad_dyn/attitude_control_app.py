@@ -2,9 +2,9 @@
 import numpy as np
 from imgui_bundle import imgui, hello_imgui, implot3d, implot
 from scipy.spatial.transform import Rotation
-
-from thrust_dynamics import ThrustDynamics, ThrustDynamicsParams
-from attitude_control import AttitudeControl, AttitudeControlParams
+from scipy.integrate import solve_ivp
+from thrust_dynamics import ThrustDynamics, ThrustDynamicsParams, ThrustDynamicsState
+from attitude_control_pid import AttitudeControlPID, AttitudeControlPIDParams
 from drone_traj import DroneTraj
 from pid import PIDParams
 
@@ -12,15 +12,13 @@ class SimulationState:
     def __init__(self):
         self.needs_update = True
         self.traj = DroneTraj()
-        
-        # Setpoints
+
         self.target_roll = 0.0
         self.target_pitch = 0.0
         self.target_yaw = 0.0
         self.target_climb_rate = 0.0
-        
-        # Params
-        self.att_ctrl_params = AttitudeControlParams()
+
+        self.att_ctrl_params = AttitudeControlPIDParams()
 
 sim_state = SimulationState()
 
@@ -50,65 +48,69 @@ def pid_ui(label: str, params: PIDParams) -> bool:
     return changed
 
 def run_simulation():
-    params = ThrustDynamicsParams(mass=1.0)
+    params = ThrustDynamicsParams(
+        mass=1.0,
+        Cl=3.0,
+        Cd=1.1
+    )
     dyn = ThrustDynamics(params)
 
-    att_ctrl = AttitudeControl(sim_state.att_ctrl_params)
+    att_ctrl = AttitudeControlPID(sim_state.att_ctrl_params)
     att_ctrl.reset()
 
-    dt = 0.01
+    dt = 0.1
     T = 10.0
     steps = int(T / dt)
 
     ts = np.linspace(0, T, steps)
     ps = np.zeros((steps, 3))
     qs = np.zeros((steps, 4))
+    vs = np.zeros((steps, 3))
     qs_des = np.zeros((steps, 4))
     
     target_euler = [sim_state.target_roll, sim_state.target_pitch, sim_state.target_yaw]
     target_quat = Rotation.from_euler('xyz', target_euler, degrees=True).as_quat(scalar_first=True)
 
-    dyn.state.p = np.array([0.0, 0.0, 0.0])
-    dyn.state.q = np.array([1.0, 0.0, 0.0, 0.0])
-    
-    for i in range(steps):
-        state = dyn.state
-        ps[i] = state.p
-        qs[i] = state.q
-        qs_des[i] = target_quat
 
+    def ode(t, y):
+        state = ThrustDynamicsState.from_vector(y)
         current_quat = state.q
+        current_quat /= np.linalg.norm(current_quat)
         current_rates = state.w
-        climb_rate = state.v[2]
-
-        motor_commands = att_ctrl.control(
+        omega = att_ctrl.control(
             target_quat,
             current_quat,
             current_rates,
             target_climb_rate=sim_state.target_climb_rate,
-            current_climb_rate=climb_rate,
+            current_climb_rate=state.v[2],
             dt=dt
         )
+        dstate = dyn.dx_dt(omega, ThrustDynamicsState.from_vector(y))
+        return dstate.to_vector()
 
-        dstate = dyn.dx_dt(motor_commands)
-        state = state + dstate * dt
-        state.q = state.q / np.linalg.norm(state.q)
-        dyn.state = state
+    state = ThrustDynamicsState.zero_state()
+    sol = solve_ivp(ode, [0, T], state.to_vector(), t_eval=ts, method='RK45')
+    for i in range(steps):
+        s = ThrustDynamicsState.from_vector(sol.y[:, i])
+        ps[i] = s.p
+        qs[i] = s.q
+        vs[i] = s.v
+        qs_des[i] = target_quat
 
     sim_state.traj = DroneTraj()
     sim_state.traj.set_data(ps, qs, ts)
-    
-    # Convert quaternions to euler for plotting
-    r_act = Rotation.from_quat(qs[:, [1, 2, 3, 0]]) # scipy uses x,y,z,w
+
+    r_act = Rotation.from_quat(qs, scalar_first=True)
     euler_act = r_act.as_euler('xyz', degrees=True)
     
-    r_des = Rotation.from_quat(qs_des[:, [1, 2, 3, 0]])
+    r_des = Rotation.from_quat(qs_des, scalar_first=True)
     euler_des = r_des.as_euler('xyz', degrees=True)
 
     sim_state.traj.add_value_plot("Roll").add_data("act", euler_act[:, 0]).add_data("des", euler_des[:, 0])
     sim_state.traj.add_value_plot("Pitch").add_data("act", euler_act[:, 1]).add_data("des", euler_des[:, 1])
     sim_state.traj.add_value_plot("Yaw").add_data("act", euler_act[:, 2]).add_data("des", euler_des[:, 2])
-    sim_state.traj.add_value_plot("Climb Rate").add_data("act", ps[:, 2]).add_data("des", np.full_like(ts, sim_state.target_climb_rate))
+    sim_state.traj.add_value_plot("Climb Rate").add_data("act", vs[:, 2]).add_data(
+        "des", np.full_like(ts, sim_state.target_climb_rate))
 
 def gui():
     if imgui.begin("Setpoints"):
@@ -128,8 +130,8 @@ def gui():
 
     if imgui.begin("PID Tuning"):
         changed = False
-        changed |= pid_ui("Pitch Rate PID", sim_state.att_ctrl_params.pitch_rate_pid)
         changed |= pid_ui("Roll Rate PID", sim_state.att_ctrl_params.roll_rate_pid)
+        changed |= pid_ui("Pitch Rate PID", sim_state.att_ctrl_params.pitch_rate_pid)
         changed |= pid_ui("Yaw Rate PID", sim_state.att_ctrl_params.yaw_rate_pid)
         changed |= pid_ui("Thrust PID", sim_state.att_ctrl_params.thrust_pid)
         

@@ -7,12 +7,24 @@ class ValPlot:
     def __init__(self, ts: np.ndarray):
         self._label2data = {}
         self._ts = np.ascontiguousarray(ts, dtype=np.float64)
+        self.y_min = float('inf')
+        self.y_max = float('-inf')
+        self._first_plot = True
 
     def add_data(self, label: str, data: np.ndarray):
-        self._label2data[label] = np.ascontiguousarray(data, dtype=np.float64)
+        data_c = np.ascontiguousarray(data, dtype=np.float64)
+        self._label2data[label] = data_c
+        if data_c.size > 0:
+            self.y_min = min(self.y_min, np.min(data_c))
+            self.y_max = max(self.y_max, np.max(data_c))
         return self
 
     def plot(self):
+        if self._first_plot and self.y_min != float('inf') and self._ts.size > 0:
+            padding = (self.y_max - self.y_min) * 0.1 if self.y_max != self.y_min else 0.5
+            implot.setup_axes_limits(self._ts[0], self._ts[-1], self.y_min - padding, self.y_max + padding, implot.Cond_.always)
+            self._first_plot = False
+
         for label, data in self._label2data.items():
             implot.plot_line(label, self._ts, data)
 

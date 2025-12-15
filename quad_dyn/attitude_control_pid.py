@@ -6,25 +6,30 @@ from scipy.spatial.transform import Rotation
 
 
 @dataclass
-class AttitudeControlParams:
+class AttitudeControlPIDParams:
     pitch_rate_pid: PIDParams
     roll_rate_pid: PIDParams
     yaw_rate_pid: PIDParams
     thrust_pid: PIDParams
+    min_mot_spin: float
+    max_mot_spin: float
 
     def __init__(self):
-        self.pitch_rate_pid = PIDParams(P=0.05, D=0.0001, I=0.0, FF=0.0, D_FF=0.0, max_integral=10.0, min_output=-10.0, max_output=10.0)
-        self.roll_rate_pid = PIDParams(P=0.05, D=0.0001, I=0.0, FF=0.0, D_FF=0.0, max_integral=10.0, min_output=-10.0, max_output=10.0)
-        self.yaw_rate_pid = PIDParams(P=0.3, D=0.01, I=0.0, FF=0.0, D_FF=0.0, max_integral=10.0, min_output=-10.0, max_output=10.0)
-        self.thrust_pid = PIDParams(P=10.0, D=0.01, I=0.01, FF=10.0, D_FF=0.0, max_integral=50.0, min_output=0.0, max_output=100.0)
+        self.pitch_rate_pid = PIDParams(P=1.00, D=0.1, I=0.01, FF=0.0, D_FF=0.0, max_integral=10.0, min_output=-10.0, max_output=10.0)
+        self.roll_rate_pid = PIDParams(P=1.00, D=0.1, I=0.01, FF=0.0, D_FF=0.0, max_integral=10.0, min_output=-10.0, max_output=10.0)
+        self.yaw_rate_pid = PIDParams(P=1.0, D=0.01, I=0.01, FF=0.0, D_FF=0.0, max_integral=10.0, min_output=-10.0, max_output=10.0)
+        self.thrust_pid = PIDParams(P=10.0, D=0.01, I=0.01, FF=9.81, D_FF=0.0, max_integral=50.0, min_output=0.0, max_output=100.0)
+        self.min_mot_spin = 0.02
+        self.max_mot_spin = 10.0
 
 
-class AttitudeControl:
-    def __init__(self, params: AttitudeControlParams):
+class AttitudeControlPID:
+    def __init__(self, params: AttitudeControlPIDParams):
         self.pitch_rate_pid = PID(params.pitch_rate_pid)
         self.roll_rate_pid = PID(params.roll_rate_pid)
         self.yaw_rate_pid = PID(params.yaw_rate_pid)
         self.climb_rate_pid = PID(params.thrust_pid)
+        self.params = params
 
     def reset(self):
         self.pitch_rate_pid.reset()
@@ -57,7 +62,6 @@ class AttitudeControl:
         rot = Rotation.from_quat(current_quat, scalar_first=True).as_matrix()
         z_body = rot[:, 2]
         thrust = climb_rate / z_body[2]  # Approximate thrust needed in body frame
-        # print(f"thrust: {thrust}, climb_rate: {climb_rate}, z_body[2]: {z_body[2]}")
         return roll_torque, pitch_torque, yaw_torque, thrust
 
     def _torques2motor(self, roll_torque: float, pitch_torque: float, yaw_torque: float, thrust: float):
@@ -75,7 +79,9 @@ class AttitudeControl:
         w2 = np.sqrt(max(0, (C_d*F_des*d + C_d*tau_x_des - C_d*tau_y_des + C_l*d*tau_z_des)/(C_d*C_l*d)))/2
         w3 = np.sqrt(max(0, (C_d*F_des*d + C_d*tau_x_des + C_d*tau_y_des - C_l*d*tau_z_des)/(C_d*C_l*d)))/2
         
-        return np.array([w0, w1, w2, w3])
+        omega = np.array([w0, w1, w2, w3])
+        omega = np.clip(omega, self.params.min_mot_spin, self.params.max_mot_spin)
+        return omega
 
     def _attitude2rates(self, trg_quat: np.ndarray, cur_quat: np.ndarray) -> np.ndarray:
         cur_quat_conj = quat_conj(cur_quat, w_first=True)
