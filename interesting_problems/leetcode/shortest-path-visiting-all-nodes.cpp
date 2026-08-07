@@ -8,7 +8,7 @@
 
 using namespace std;
 
-constexpr int kMxTrgs = 13;
+constexpr int kMxTrgs = 20;
 typedef bitset<kMxTrgs> bs;
 
 struct Node
@@ -74,6 +74,30 @@ int main()
 {
     // cout << shortestPathLength({{1},{0,2,4},{1,3,4},{2},{1,2}}) << endl;
     cout << shortestPathLength({{1, 2, 3},{0},{0},{0}}) << endl;
+
+    // Example with 18 nodes: cycle graph 0-1-2-...-17-0.
+    vector<vector<int>> graph18 = {
+        {1, 17},   // 0
+        {0, 2},    // 1
+        {1, 3},    // 2
+        {2, 4},    // 3
+        {3, 5},    // 4
+        {4, 6},    // 5
+        {5, 7},    // 6
+        {6, 8},    // 7
+        {7, 9},    // 8
+        {8, 10},   // 9
+        {9, 11},   // 10
+        {10, 12},  // 11
+        {11, 13},  // 12
+        {12, 14},  // 13
+        {13, 15},  // 14
+        {14, 16},  // 15
+        {15, 17},  // 16
+        {16, 0}    // 17
+    };
+    cout << shortestPathLength(graph18) << endl;
+
     return 0;
 }
 

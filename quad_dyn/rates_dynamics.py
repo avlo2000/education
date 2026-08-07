@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from quad_dyn.spatial import quat_mul
+from spatial import quat_mul
 
 
 G_CONST = 9.81

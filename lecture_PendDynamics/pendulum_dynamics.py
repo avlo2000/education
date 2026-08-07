@@ -3,6 +3,14 @@ import pygame
 import sys
 
 from sim_scene import SimScene
+from generated_dynamics import A_state_nl, B_state_nl
+
+# Permutation from [theta, theta_dot, x, x_dot] to [x, xdot, theta, thetadot]
+_P = np.array([[0, 0, 1, 0],
+               [0, 0, 0, 1],
+               [1, 0, 0, 0],
+               [0, 1, 0, 0]], dtype=float)
+_PT = _P.T
 
 class PendulumDynamics:
     def __init__(self, m=1.0, M=1.0, r=1.0, g=9.81, c=0.1, b=0.1):
@@ -35,12 +43,24 @@ class PendulumDynamics:
 
         return np.array([theta_dot, theta_ddot, x_dot, x_ddot])
 
+    def jac_A(self, state: np.ndarray, u: float = 0.0) -> np.ndarray:
+        theta, theta_dot, _, x_dot = state
+        A_nb = A_state_nl(theta, theta_dot, x_dot, u,
+                          self.m, self.M, self.r, self.g, self.b, self.c)
+        return _PT @ A_nb @ _P
+
+    def jac_B(self, state: np.ndarray) -> np.ndarray:
+        theta = state[0]
+        B_nb = B_state_nl(theta, 0.0, 0.0, 0.0,
+                          self.m, self.M, self.r, self.g, self.b, self.c)
+        return _PT @ B_nb
+
 
 def main():
     pygame.init()
 
-    dt = 0.1
-    pendulum = PendulumDynamics(m=1.0, M=5.0, r=2.0, g=9.81, c=0.1, b=10.5)
+    dt = 0.05
+    pendulum = PendulumDynamics(m=1.0, M=5.0, r=2.0, g=9.81, c=1.1, b=10.5)
 
     width, height = 1000, 600
     screen = pygame.display.set_mode((width, height))
@@ -53,6 +73,14 @@ def main():
     paused = False
     force_mag = 20.0
     state = np.array([0.0, 0.0, 0.0, 0.0])  # [theta, theta_dot, x, x_dot]
+    state_lin = state.copy()
+
+    A_lin = pendulum.jac_A(state)
+    B_lin = pendulum.jac_B(state).flatten()
+
+    def lin_dynamics(s, ctrl):
+        return A_lin @ s + B_lin * ctrl
+
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -62,6 +90,7 @@ def main():
                     paused = not paused
                 elif event.key == pygame.K_r:
                     scene.reset()
+                    state_lin = state.copy()
 
         keys = pygame.key.get_pressed()
         u = 0.0
@@ -71,14 +100,16 @@ def main():
             u = force_mag
 
         if not paused:
-            state_dot = pendulum.dynamics(state, u)
-            # k1 = pendulum.dynamics(state, u)
-            # k2 = pendulum.dynamics(state + 0.5 * dt * k1, u)
-            # k3 = pendulum.dynamics(state + 0.5 * dt * k2, u)
-            # k4 = pendulum.dynamics(state + dt * k3, u)
-            # state_dot = (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-            state = state + state_dot
+            state = state + dt * pendulum.dynamics(state, u)
+
+            lk1 = lin_dynamics(state_lin, u)
+            lk2 = lin_dynamics(state_lin + 0.5 * dt * lk1, u)
+            lk3 = lin_dynamics(state_lin + 0.5 * dt * lk2, u)
+            lk4 = lin_dynamics(state_lin + dt * lk3, u)
+            state_lin = state_lin + (dt / 6.0) * (lk1 + 2 * lk2 + 2 * lk3 + lk4)
+
             scene.set_state(state)
+            scene.set_linearized_state(state_lin)
 
         scene.render(u, paused)
         pygame.display.flip()
