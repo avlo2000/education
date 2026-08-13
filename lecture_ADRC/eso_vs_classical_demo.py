@@ -60,8 +60,8 @@ def simulate(b0, wo, dist_amp, t, u, dt):
 
         # Record each observer's current estimate (aligned to time t[i]) before
         # advancing it, so estimates and true states share the same time index.
-        c1[i], c2[i] = lobs.x1, lobs.x2
-        z1[i], z2[i], z3[i] = eso.z1, eso.z2, eso.z3
+        c1[i], c2[i] = lobs.x[0], lobs.x[1]
+        z1[i], z2[i], z3[i] = eso.z[0], eso.z[1], eso.z[2]
 
         # Both observers see only the output (pos) and the control input
         lobs.update(pos, u[i], dt)

@@ -1,48 +1,52 @@
+import numpy as np
+
+
 class ClassicalObserver2:
     """
     Classical (Luenberger) observer for the *nominal* second-order system:
 
         y_ddot = b0 * u
 
-    It has NO disturbance model, so it estimates only:
-        x1 ≈ y
-        x2 ≈ y_dot
+    State vector:  x = [x1, x2]^T  ≈  [y, y_dot]^T
 
-    Observer gains place both error poles at -wo:
-        (s + wo)^2 = s^2 + 2*wo*s + wo^2   =>   l1 = 2*wo, l2 = wo^2
+    Continuous-time observer:
+        x_dot = (A - L C) x + B u + L y
+
+    where:
+        A = [[0, 1],        B = [[0  ],      C = [1, 0]
+             [0, 0]]             [b0 ]]
+
+        L = [l1, l2]^T  with poles at -wo:
+            l1 = 2*wo,  l2 = wo^2
+
+    Integrated with forward Euler:
+        x[k+1] = x[k] + dt * x_dot[k]
     """
 
     def __init__(self, b0: float, wo: float):
         self.b0 = b0
         self.wo = wo
 
-        self.l1 = 2.0 * wo
-        self.l2 = wo**2
+        l1 = 2.0 * wo
+        l2 = wo**2
 
-        self.x1 = 0.0
-        self.x2 = 0.0
+        # A - L C
+        self.A_lc = np.array([
+            [-l1, 1.0],
+            [-l2, 0.0],
+        ])
+        self.B = np.array([0.0, b0])
+        self.L = np.array([l1, l2])
+
+        self.x = np.zeros(2)
 
     def reset(self, y0: float = 0.0, y_dot0: float = 0.0):
-        self.x1 = y0
-        self.x2 = y_dot0
+        self.x = np.array([y0, y_dot0])
 
     def update(self, y: float, u: float, dt: float):
-        """
-        Update observer using measured output y and control input u.
-
-        Returns:
-            estimated_y, estimated_y_dot
-        """
-
-        e = self.x1 - y
-
-        x1_dot = self.x2 - self.l1 * e
-        x2_dot = self.b0 * u - self.l2 * e
-
-        self.x1 += dt * x1_dot
-        self.x2 += dt * x2_dot
-
-        return self.x1, self.x2
+        x_dot = self.A_lc @ self.x + self.B * u + self.L * y
+        self.x = self.x + dt * x_dot
+        return self.x[0], self.x[1]
 
 
 class LinearESO2:
@@ -51,28 +55,44 @@ class LinearESO2:
 
         y_ddot = b0 * u + f
 
-    Estimates:
-        z1 ≈ y
-        z2 ≈ y_dot
-        z3 ≈ total disturbance f
+    State vector:  z = [z1, z2, z3]^T  ≈  [y, y_dot, f]^T
+
+    Continuous-time observer:
+        z_dot = (A - L C) z + B u + L y
+
+    where:
+        A = [[0, 1, 0],        B = [[0  ],      C = [1, 0, 0]
+             [0, 0, 1],             [b0 ],
+             [0, 0, 0]]             [0  ]]
+
+        L = [beta1, beta2, beta3]^T  with triple pole at -wo:
+            beta1 = 3*wo,  beta2 = 3*wo^2,  beta3 = wo^3
+
+    Integrated with forward Euler:
+        z[k+1] = z[k] + dt * z_dot[k]
     """
 
     def __init__(self, b0: float, wo: float):
         self.b0 = b0
         self.wo = wo
 
-        self.beta1 = 3.0 * wo
-        self.beta2 = 3.0 * wo**2
-        self.beta3 = wo**3
+        beta1 = 6.0 * wo
+        beta2 = 3.0 * wo**2
+        beta3 = wo**3
 
-        self.z1 = 0.0
-        self.z2 = 0.0
-        self.z3 = 0.0
+        # A - L C
+        self.A_lc = np.array([
+            [-beta1, 1.0, 0.0],
+            [-beta2, 0.0, 1.0],
+            [-beta3, 0.0, 0.0],
+        ])
+        self.B = np.array([0.0, b0, 0.0])
+        self.L = np.array([beta1, beta2, beta3])
+
+        self.z = np.zeros(3)
 
     def reset(self, y0: float = 0.0, y_dot0: float = 0.0, disturbance0: float = 0.0):
-        self.z1 = y0
-        self.z2 = y_dot0
-        self.z3 = disturbance0
+        self.z = np.array([y0, y_dot0, disturbance0])
 
     def update(self, y: float, u: float, dt: float):
         """
@@ -81,15 +101,6 @@ class LinearESO2:
         Returns:
             estimated_y, estimated_y_dot, estimated_disturbance
         """
-
-        e = self.z1 - y
-
-        z1_dot = self.z2 - self.beta1 * e
-        z2_dot = self.z3 + self.b0 * u - self.beta2 * e
-        z3_dot = -self.beta3 * e
-
-        self.z1 += dt * z1_dot
-        self.z2 += dt * z2_dot
-        self.z3 += dt * z3_dot
-
-        return self.z1, self.z2, self.z3
+        z_dot = self.A_lc @ self.z + self.B * u + self.L * y
+        self.z = self.z + dt * z_dot
+        return self.z[0], self.z[1], self.z[2]

@@ -20,6 +20,12 @@ that switches on partway through -- is unknown to them.
 Drag the sliders to retune each controller and change the disturbance amplitude.
 """
 
+"""
+Betaflight demo
+https://www.youtube.com/watch?v=fxuEPyDjAdE
+"""
+
+
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.widgets import Slider
